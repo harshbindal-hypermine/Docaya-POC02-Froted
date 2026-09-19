@@ -1,3 +1,5 @@
+# DocayaGithubPOC02
+
 # Docaya | دوكايا
 
 **Document Management Intelligence · ذكاء إدارة الوثائق**
@@ -107,12 +109,12 @@ The latest UI revision was also checked for loaded bilingual fonts, desktop/mobi
 
 ## Publish the hosted demo (Azure Storage static website)
 
-Canonical repository: **[hypermine2050/Docaya-Pro](https://github.com/hypermine2050/Docaya-Pro)**.
+Canonical repository: **[hypermine2050/DocayaGithubPOC02](https://github.com/hypermine2050/DocayaGithubPOC02)**.
 
 Git remote `origin` should point to:
 
 ```powershell
-https://github.com/hypermine2050/Docaya-Pro.git
+https://github.com/hypermine2050/DocayaGithubPOC02.git
 ```
 
 The hosted demo URL is **[https://sthmaihrnhp04.z13.web.core.windows.net/docayapro/](https://sthmaihrnhp04.z13.web.core.windows.net/docayapro/)**, served from the `$web/docayapro/` folder of the Azure Storage account `sthmaihrnhp04` (resource group `rg-hmai-hypersigma-hp03`, subscription `hmai-hyperaihub-products`). The storage account also hosts other applications at the site root, so Docaya must only ever be published inside its own `docayapro/` folder.
