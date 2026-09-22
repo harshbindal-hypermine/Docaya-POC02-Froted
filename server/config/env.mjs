@@ -12,9 +12,23 @@ const csv = (value) =>
     .map((item) => item.trim())
     .filter(Boolean)
 
+const sharePointSiteUrlParts = (value) => {
+  if (!value) return { hostname: '', sitePath: '' }
+  try {
+    const url = new URL(value)
+    const sitePath = url.pathname.match(/^(\/sites\/[^/]+)/i)?.[1] || ''
+    return { hostname: url.hostname, sitePath }
+  } catch {
+    return { hostname: '', sitePath: '' }
+  }
+}
+
 export function loadConfig(overrides = {}) {
   const environment = overrides.environment || process.env.DOCAYA_ENV || 'production'
   const development = environment === 'development' || environment === 'test'
+  const legacySharePointUrl = sharePointSiteUrlParts(
+    overrides.sharePointSiteUrl || process.env.SHAREPOINT_SITE_URL || '',
+  )
   const config = {
     environment,
     port: Number(overrides.port ?? process.env.PORT ?? 8787),
@@ -54,9 +68,28 @@ export function loadConfig(overrides = {}) {
     redisToken: overrides.redisToken || process.env.REDIS_TOKEN || '',
     serviceBusNamespace: overrides.serviceBusNamespace || process.env.SERVICE_BUS_NAMESPACE || '',
     serviceBusTopic: overrides.serviceBusTopic || process.env.SERVICE_BUS_TOPIC || '',
+    sharePointTenantId:
+      overrides.sharePointTenantId || process.env.TENANT_ID || process.env.ENTRA_TENANT_ID || '',
+    sharePointClientId:
+      overrides.sharePointClientId || process.env.CLIENT_ID || process.env.ENTRA_CLIENT_ID || '',
+    sharePointClientSecret: overrides.sharePointClientSecret || process.env.CLIENT_SECRET || '',
+    sharePointHostname:
+      overrides.sharePointHostname || process.env.SHAREPOINT_HOSTNAME || legacySharePointUrl.hostname || '',
+    sharePointSitePath:
+      overrides.sharePointSitePath || process.env.SHAREPOINT_SITE_PATH || legacySharePointUrl.sitePath || '',
+    sharePointDriveName: overrides.sharePointDriveName || process.env.SHAREPOINT_DRIVE_NAME || '',
+    sharePointUploadFolderName:
+      overrides.sharePointUploadFolderName || process.env.SHAREPOINT_UPLOAD_FOLDER_NAME || 'Docaya Uploads',
     sharePointSiteUrl: overrides.sharePointSiteUrl || process.env.SHAREPOINT_SITE_URL || '',
     sharePointDriveId: overrides.sharePointDriveId || process.env.SHAREPOINT_DRIVE_ID || '',
-    managedIdentity: overrides.managedIdentity ?? process.env.SHAREPOINT_USE_MANAGED_IDENTITY === 'true',
+    sharePointUseManagedIdentity:
+      overrides.sharePointUseManagedIdentity ??
+      overrides.managedIdentity ??
+      process.env.SHAREPOINT_USE_MANAGED_IDENTITY === 'true',
+    managedIdentity:
+      overrides.managedIdentity ??
+      overrides.sharePointUseManagedIdentity ??
+      process.env.SHAREPOINT_USE_MANAGED_IDENTITY === 'true',
     openaiEndpoint: overrides.openaiEndpoint || process.env.AZURE_OPENAI_ENDPOINT || '',
     openaiDeployment: overrides.openaiDeployment || process.env.AZURE_OPENAI_DEPLOYMENT || '',
     openaiApiKey: overrides.openaiApiKey || process.env.AZURE_OPENAI_API_KEY || '',
@@ -79,7 +112,13 @@ export function loadConfig(overrides = {}) {
   if (config.corsOrigins.includes('*')) throw new Error('Wildcard CORS origins are prohibited.')
   if (!development && (config.localSqlite || !config.postgresUrl))
     throw new Error('Production requires PostgreSQL and prohibits local SQLite.')
-  if (config.managedIdentity && (!config.sharePointSiteUrl || !config.sharePointDriveId))
-    throw new Error('Managed-identity SharePoint mode requires an explicit site URL and drive ID.')
+  if (
+    config.sharePointUseManagedIdentity &&
+    !(config.sharePointHostname && config.sharePointSitePath && config.sharePointDriveName) &&
+    (!config.sharePointSiteUrl || !config.sharePointDriveId)
+  )
+    throw new Error(
+      'Managed-identity SharePoint mode requires explicit SharePoint hostname, site path, and drive name, or a SharePoint site URL and drive ID.',
+    )
   return Object.freeze(config)
 }

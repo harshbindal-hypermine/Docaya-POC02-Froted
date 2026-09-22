@@ -1,15 +1,19 @@
+import { SharePointFolderTree, foldersOnly } from '../components/SharePointFolderTree'
 import { local } from './translations'
-import { useState, type Dispatch, type SetStateAction } from 'react'
+import { useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 import {
   ArrowRight,
   Check,
   Download,
+  FileText,
+  FolderOpen,
   LockKeyhole,
   Plus,
   RefreshCw,
   Send,
   Settings2,
   ShieldCheck,
+  Trash2,
 } from 'lucide-react'
 import {
   addEvent,
@@ -26,16 +30,144 @@ import {
   type Workspace,
 } from './model'
 import { Badge, DocumentTable, Empty, Field, Modal, type Translate } from './ui'
+import {
+  addDepartmentSharePointFolderAccess,
+  getSharePointFoldersByDepartment,
+  listSharePointItems,
+  listAdminSharePointFolders,
+  listDepartmentSharePointFolderAccess,
+  removeDepartmentSharePointFolderAccess,
+} from '../services/api'
+import type { DepartmentSharePointFolder, SharePointFolder, SharePointItem } from '../types'
 export type PageProps = {
   state: Workspace
   setState: Dispatch<SetStateAction<Workspace>>
   role: Role
   lang: Language
+  department: string
   t: Translate
   visible: RecordItem[]
   onOpen: (r: RecordItem) => void
   notify: (text: string) => void
   selectedId?: string
+}
+export function DocumentLibraryPage({ department, lang, t }: PageProps) {
+  const [folders, setFolders] = useState<DepartmentSharePointFolder[]>([])
+  const [drive, setDrive] = useState<{ name: string; webUrl?: string | null } | null>(null)
+  const [site, setSite] = useState<{ hostname: string; path: string } | null>(null)
+  const [selectedFolder, setSelectedFolder] = useState<SharePointFolder | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const loadFolders = async (signal?: AbortSignal) => {
+    setBusy(true)
+    setError('')
+    try {
+      const response = await getSharePointFoldersByDepartment(department, signal)
+      setFolders(response.items || response.folders || [])
+      setDrive(response.drive)
+      setSite(response.site)
+      setSelectedFolder(null)
+    } catch (problem) {
+      if (signal?.aborted) return
+      setFolders([])
+      setDrive(null)
+      setSite(null)
+      setError(
+        problem instanceof Error
+          ? problem.message
+          : t('Assigned SharePoint folders could not be loaded.', 'تعذر تحميل مجلدات شيربوينت المرتبطة.'),
+      )
+    } finally {
+      if (!signal?.aborted) setBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    const controller = new AbortController()
+    void loadFolders(controller.signal)
+    return () => controller.abort()
+  }, [department])
+
+  const siteRoot = site ? `${site.hostname}${site.path}` : ''
+  const libraryName = drive?.name || t('Documents', 'المستندات')
+  const loadChildren = async (folderId: string) => (await listSharePointItems(folderId)).items
+
+  return (
+    <section className="p-card p-library-card">
+      <div className="p-card-head">
+        <div>
+          <h3>{t('Assigned SharePoint folders', 'مجلدات شيربوينت المرتبطة')}</h3>
+          <p>
+            {t(
+              `Folders available to ${department} from the configured SharePoint library.`,
+              `المجلدات المتاحة لإدارة ${local(department, lang)} من مكتبة شيربوينت المهيأة.`,
+            )}
+          </p>
+        </div>
+        <button className="p-btn" disabled={busy} onClick={() => void loadFolders()}>
+          <RefreshCw size={16} className={busy ? 'p-spin' : ''} />
+          {t('Refresh', 'تحديث')}
+        </button>
+      </div>
+      <div className="p-library-summary">
+        <span>
+          <strong>{local(department, lang)}</strong>
+          <small>{t('Selected department', 'الإدارة المحددة')}</small>
+        </span>
+        <span>
+          <strong>{libraryName}</strong>
+          <small>{t('Assigned SharePoint folders for this department', 'مجلدات شيربوينت المرتبطة بهذه الإدارة')}</small>
+        </span>
+        <span>
+          <strong>{folders.length}</strong>
+          <small>{t('Assigned folders', 'مجلدات مرتبطة')}</small>
+        </span>
+      </div>
+      {error && <div className="p-error">{error}</div>}
+      {!error && folders.length === 0 && !busy ? (
+        <div className="p-empty">
+          <FolderOpen size={32} />
+          <h3>{t('No folders assigned yet', 'لا توجد مجلدات مرتبطة بعد')}</h3>
+          <p>
+            {t(
+              'Use Admin center -> Folder access to assign SharePoint folders to this department.',
+              'استخدم مركز الإدارة ← صلاحية المجلدات لربط مجلدات شيربوينت بهذه الإدارة.',
+            )}
+          </p>
+        </div>
+      ) : (
+        <>
+          <SharePointFolderTree
+            library={{ id: 'sharepoint-drive', name: libraryName }}
+            roots={folders}
+            selectedId={selectedFolder?.id}
+            loading={busy}
+            error={error}
+            emptyMessage={t(
+              `No SharePoint folders have been assigned to ${department} yet.`,
+              `لم يتم ربط مجلدات شيربوينت بإدارة ${local(department, lang)} بعد.`,
+            )}
+            loadingMessage={t('Loading SharePoint folders...', 'جار تحميل مجلدات شيربوينت...')}
+            errorMessage={t(
+              'Unable to load SharePoint folders. Please check the SharePoint connection or try again.',
+              'تعذر تحميل مجلدات شيربوينت. تحقق من الاتصال أو حاول مرة أخرى.',
+            )}
+            selectLabel={t('Select folder', 'اختر المجلد')}
+            showFiles
+            onSelect={setSelectedFolder}
+            onLoadChildren={loadChildren}
+          />
+          {selectedFolder && (
+            <div className="p-folder-selection">
+              <FolderOpen size={17} />
+              <span>{selectedFolder.name}</span>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  )
 }
 export function Operations({
   state,
@@ -538,6 +670,71 @@ export function AdminPage({ state, setState, role, lang, t, notify }: PageProps)
   const [tab, setTab] = useState('routing')
   const [newClass, setNewClass] = useState('')
   const [settings, setSettings] = useState(state.settings)
+  const [folderDepartment, setFolderDepartment] = useState(state.settings.department)
+  const [folderRoots, setFolderRoots] = useState<SharePointItem[]>([])
+  const [selectedFolder, setSelectedFolder] = useState<SharePointFolder | null>(null)
+  const [folderLibraryName, setFolderLibraryName] = useState(t('Documents', 'المستندات'))
+  const [folderMappings, setFolderMappings] = useState<DepartmentSharePointFolder[]>([])
+  const [folderBusy, setFolderBusy] = useState(false)
+  const [folderError, setFolderError] = useState('')
+  const mappedFolders = folderMappings.filter((item) => item.department === folderDepartment)
+  const selectedFolderAssigned = Boolean(
+    selectedFolder && mappedFolders.some((item) => item.sharePointFolderId === selectedFolder.id),
+  )
+  const loadFolderAccess = async () => {
+    setFolderBusy(true)
+    setFolderError('')
+    try {
+      const [folders, mappings] = await Promise.all([
+        listAdminSharePointFolders(),
+        listDepartmentSharePointFolderAccess(),
+      ])
+      setFolderRoots(folders.items)
+      setFolderLibraryName(folders.drive?.name || t('Documents', 'المستندات'))
+      setFolderMappings(mappings)
+      setSelectedFolder(null)
+    } catch (problem) {
+      setFolderError(
+        problem instanceof Error
+          ? problem.message
+          : t('SharePoint folders could not be loaded. Please try again.', 'تعذر تحميل مجلدات شيربوينت. حاول مرة أخرى.'),
+      )
+    } finally {
+      setFolderBusy(false)
+    }
+  }
+  useEffect(() => {
+    if (tab === 'folder-access') void loadFolderAccess()
+  }, [tab])
+  const loadAdminChildren = async (folderId: string) => (await listAdminSharePointFolders(folderId)).items
+  const assignSharePointFolder = async () => {
+    if (!selectedFolder || selectedFolderAssigned) return
+    setFolderBusy(true)
+    setFolderError('')
+    try {
+      const item = await addDepartmentSharePointFolderAccess(folderDepartment, selectedFolder)
+      setFolderMappings((current) => [item, ...current])
+      setSelectedFolder(null)
+      notify(t('SharePoint folder assigned to this department.', 'تم ربط مجلد شيربوينت بهذه الإدارة.'))
+    } catch (problem) {
+      setFolderError(problem instanceof Error ? problem.message : String(problem))
+    } finally {
+      setFolderBusy(false)
+    }
+  }
+  const removeSharePointFolder = async (folder: DepartmentSharePointFolder) => {
+    setFolderBusy(true)
+    setFolderError('')
+    try {
+      await removeDepartmentSharePointFolderAccess(folderDepartment, folder.sharePointFolderId)
+      setFolderMappings((current) => current.filter((item) => item.mappingId !== folder.mappingId))
+      notify(t('SharePoint folder access removed.', 'تمت إزالة صلاحية مجلد شيربوينت.'))
+    } catch (problem) {
+      setFolderError(problem instanceof Error ? problem.message : String(problem))
+    } finally {
+      setFolderBusy(false)
+    }
+  }
   const save = () => {
     setState((s) =>
       addEvent(
@@ -573,6 +770,7 @@ export function AdminPage({ state, setState, role, lang, t, notify }: PageProps)
           ['routing', 'Types & routing', 'الفئات والتوجيه'],
           ['policies', 'Workflow & lifecycle', 'سير العمل ودورة الحياة'],
           ['identity', 'Identity & access', 'الهوية والوصول'],
+          ['folder-access', 'Folder access', 'صلاحية المجلدات'],
           ['integrations', 'Integrations', 'التكاملات'],
         ]
           .filter(([id]) => role !== 'Department Administrator' || id === 'routing')
@@ -789,41 +987,116 @@ export function AdminPage({ state, setState, role, lang, t, notify }: PageProps)
           </div>
         </>
       )}
+      {tab === 'folder-access' && (
+        <div className="p-two p-folder-access">
+          <section className="p-card">
+            <div className="p-card-head">
+              <div>
+                <h3>{t('Department folder access', 'صلاحية مجلدات الإدارة')}</h3>
+                <p>{t('Assign real SharePoint folders to each department.', 'اربط مجلدات شيربوينت الفعلية بكل إدارة.')}</p>
+              </div>
+              <button className="p-btn" disabled={folderBusy} onClick={() => void loadFolderAccess()}>
+                <RefreshCw size={16} className={folderBusy ? 'p-spin' : ''} />
+                {t('Refresh', 'تحديث')}
+              </button>
+            </div>
+            <Field label={t('Department', 'الإدارة')}>
+              <select value={folderDepartment} onChange={(event) => setFolderDepartment(event.target.value)}>
+                {departments.map((department) => (
+                  <option key={department} value={department}>
+                    {local(department, lang)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {folderError && <div className="p-error">{folderError}</div>}
+            <SharePointFolderTree
+              library={{ id: 'sharepoint-drive', name: folderLibraryName }}
+              roots={folderRoots}
+              selectedId={selectedFolder?.id}
+              loading={folderBusy}
+              error=""
+              emptyMessage={t('No folders found in this SharePoint library.', 'لا توجد مجلدات في مكتبة شيربوينت هذه.')}
+              loadingMessage={t('Loading SharePoint folders...', 'جار تحميل مجلدات شيربوينت...')}
+              errorMessage={t(
+                'SharePoint folders could not be loaded. Please try again.',
+                'تعذر تحميل مجلدات شيربوينت. حاول مرة أخرى.',
+              )}
+              selectLabel={t('Select folder to assign', 'اختر مجلداً للربط')}
+              showFiles
+              onSelect={setSelectedFolder}
+              onLoadChildren={loadAdminChildren}
+            />
+            {selectedFolder && (
+              <div className="p-folder-selection">
+                <FolderOpen size={17} />
+                <span>{selectedFolder.name}</span>
+              </div>
+            )}
+            <div className="p-actions end">
+              <button
+                className="p-btn primary"
+                disabled={folderBusy || !selectedFolder || selectedFolderAssigned}
+                onClick={assignSharePointFolder}
+              >
+                {selectedFolderAssigned ? t('Already assigned', 'مرتبط بالفعل') : t('Assign folder', 'ربط المجلد')}
+              </button>
+            </div>
+          </section>
+          <section className="p-card">
+            <h3>{t('Assigned folders', 'المجلدات المرتبطة')}</h3>
+            <p>{t('Registration only shows these mapped folders for the selected department.', 'يعرض التسجيل هذه المجلدات المرتبطة فقط للإدارة المحددة.')}</p>
+            <div className="p-folder-list assigned">
+              {mappedFolders.length === 0 ? (
+                <p className="p-subtle">{t('No SharePoint folders assigned yet.', 'لم يتم ربط أي مجلدات شيربوينت بعد.')}</p>
+              ) : (
+                mappedFolders.map((folder) => (
+                  <div className="p-folder-row" key={folder.mappingId || folder.sharePointFolderId}>
+                    <span>
+                      <strong>{folder.name}</strong>
+                    </span>
+                    <button className="p-btn" disabled={folderBusy} onClick={() => void removeSharePointFolder(folder)}>
+                      <Trash2 size={15} />
+                      {t('Remove', 'إزالة')}
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+        </div>
+      )}
       {tab === 'integrations' && (
-        <div className="p-two">
-          {[
-            [
-              'UAE PASS + Entra ID',
-              'National identity · OIDC / PKCE · MFA',
-              'الهوية الوطنية · المصادقة متعددة العوامل',
-            ],
-            [
-              'SharePoint Online',
-              'Governed service identity · original file · native versions',
-              'هوية خدمة محكومة · الملف الأصلي · الإصدارات',
-            ],
-            [
-              'Azure SQL + Blob',
-              'Registry and audit · staging-first capture',
-              'السجل والتدقيق · الالتقاط في منطقة التجهيز',
-            ],
-            [
-              'Azure AI Search + OpenAI',
-              'Approved-content retrieval · citations · ACL trimming',
-              'استرجاع المحتوى المعتمد · الاستشهادات · الصلاحيات',
-            ],
-            [
-              'Teams + Email + SignalR',
-              'Lifecycle notifications · durable delivery',
-              'تنبيهات دورة الحياة · توصيل مستدام',
-            ],
-            [
-              'Purview + Defender + Monitor',
-              'Retention · malware / DLP · operational telemetry',
-              'الحفظ · فحص البرمجيات الخبيثة · المراقبة',
-            ],
-          ].map(([name, en, ar]) => (
-            <section className="p-card" key={name}>
+        <>
+          <div className="p-two">
+            {[
+              [
+                'UAE PASS + Entra ID',
+                'National identity · OIDC / PKCE · MFA',
+                'الهوية الوطنية · المصادقة متعددة العوامل',
+              ],
+              [
+                'Azure SQL + Blob',
+                'Registry and audit · staging-first capture',
+                'السجل والتدقيق · الالتقاط في منطقة التجهيز',
+              ],
+              [
+                'Azure AI Search + OpenAI',
+                'Approved-content retrieval · citations · ACL trimming',
+                'استرجاع المحتوى المعتمد · الاستشهادات · الصلاحيات',
+              ],
+              [
+                'Teams + Email + SignalR',
+                'Lifecycle notifications · durable delivery',
+                'تنبيهات دورة الحياة · توصيل مستدام',
+              ],
+              [
+                'Purview + Defender + Monitor',
+                'Retention · malware / DLP · operational telemetry',
+                'الحفظ · فحص البرمجيات الخبيثة · المراقبة',
+              ],
+            ].map(([name, en, ar]) => (
+              <section className="p-card" key={name}>
               <div className="p-card-head">
                 <h3>{name}</h3>
                 <span className="p-badge internal">{t('Simulated', 'محاكاة')}</span>
@@ -836,10 +1109,11 @@ export function AdminPage({ state, setState, role, lang, t, notify }: PageProps)
                 )}
               </small>
             </section>
-          ))}
-        </div>
+            ))}
+          </div>
+        </>
       )}
-      {['routing', 'policies'].includes(tab) && (
+      {['routing', 'policies', 'integrations'].includes(tab) && (
         <div className="p-actions end">
           <button className="p-btn primary" disabled={!settings.library.trim()} onClick={save}>
             {t('Save configuration', 'حفظ الإعدادات')}

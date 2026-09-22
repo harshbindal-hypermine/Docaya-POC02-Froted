@@ -19,6 +19,7 @@ export type Role =
   | 'Auditor'
 export type Flow = 'Single' | 'Sequential' | 'Parallel' | 'Conditional'
 export type Sensitivity = 'Public' | 'Internal' | 'Confidential' | 'Secret'
+export type SharePointSyncMode = 'Publish approved originals' | 'Metadata only' | 'Read-only discovery'
 export type RecordItem = {
   id: string
   sampleKey?: string
@@ -28,6 +29,9 @@ export type RecordItem = {
   department: string
   sensitivity: Sensitivity
   status: Status
+  sharePointFolderId?: string
+  sharePointFolderName?: string
+  sharePointFolderPath?: string
   owner: string
   summary: string
   summaryAr: string
@@ -89,6 +93,18 @@ export type Settings = {
   classes: string[]
   department: string
   library: string
+  sharePoint: {
+    enabled: boolean
+    tenant: string
+    siteUrl: string
+    libraryName: string
+    publishPath: string
+    syncMode: SharePointSyncMode
+    versioning: boolean
+    metadataPush: boolean
+    aclTrim: boolean
+    lastValidated: string | null
+  }
   sla: number
   cleanup: string
   retentionYears: number
@@ -147,6 +163,18 @@ export const documentClasses = [
 export const SEED_VERSION = 2
 export const sensitivities: Sensitivity[] = ['Public', 'Internal', 'Confidential', 'Secret']
 export const flows: Flow[] = ['Single', 'Sequential', 'Parallel', 'Conditional']
+export const defaultSharePointSettings = (): Settings['sharePoint'] => ({
+  enabled: true,
+  tenant: 'moi.gov.ae',
+  siteUrl: 'https://moi.sharepoint.com/sites/DocayaRecords',
+  libraryName: 'Official Records',
+  publishPath: 'Official Records',
+  syncMode: 'Publish approved originals',
+  versioning: true,
+  metadataPush: true,
+  aclTrim: true,
+  lastValidated: null,
+})
 export const people: Record<Role, string> = {
   'System Administrator': 'Mariam Al Mansoori',
   'Department Administrator': 'Omar Al Ali',
@@ -368,13 +396,17 @@ export function changeRecord(
   return addEvent(next, role, label, arabic, id, reason || changed.note)
 }
 function publish(record: RecordItem, settings: Settings): RecordItem {
+  const targetRoot = settings.sharePoint?.enabled
+    ? `SharePoint Online / ${settings.sharePoint.libraryName || settings.sharePoint.publishPath || 'Official Records'}`
+    : settings.library
+  const targetFolder = record.sharePointFolderPath || `${record.department}/${record.kind}`
   return {
     ...record,
     status: 'Published',
     version: record.version + 1,
     indexed: false,
     note: '',
-    location: `${settings.library}/${record.department}/${record.kind}/${record.fileName}`,
+    location: `${targetRoot}/${targetFolder}/${record.fileName}`,
     staging: settings.cleanup === 'Purge' ? 'Purged' : 'Published / Approved',
   }
 }
@@ -824,6 +856,7 @@ export function seedWorkspace(): Workspace {
       classes: [...documentClasses],
       department: 'Operations',
       library: 'SharePoint / Official Records',
+      sharePoint: defaultSharePointSettings(),
       sla: 48,
       cleanup: 'Retain',
       retentionYears: 7,
@@ -840,7 +873,7 @@ export function seedWorkspace(): Workspace {
 }
 export const STORAGE_KEY = 'docaya-prototype-v1'
 export function migrateWorkspace(value: Workspace): Workspace {
-  if ((value.seedVersion ?? 1) >= SEED_VERSION) return value
+  if ((value.seedVersion ?? 1) >= SEED_VERSION && value.settings.sharePoint) return value
   const ids = new Set(value.documents.map((record) => record.id))
   const sampleKeys = new Set(value.documents.map((record) => record.sampleKey).filter(Boolean))
   return {
@@ -853,6 +886,7 @@ export function migrateWorkspace(value: Workspace): Workspace {
     settings: {
       ...value.settings,
       classes: [...new Set([...(value.settings.classes ?? []), ...documentClasses])],
+      sharePoint: { ...defaultSharePointSettings(), ...(value.settings.sharePoint ?? {}) },
     },
   }
 }

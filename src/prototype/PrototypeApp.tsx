@@ -53,16 +53,18 @@ import {
   AdminPage,
   AuditPage,
   CorrespondencePage,
+  DocumentLibraryPage,
   Operations,
   RecordsPage,
   ReportsPage,
   type PageProps,
 } from './Management'
-import { clearOriginals } from './files'
+import { clearOriginals, readOriginal } from './files'
 import { SearchPage, AssistantDock } from './Discovery'
 import { ApprovalQueue } from './ApprovalQueue'
 import { approvalQueue, type ApprovalView } from './approval-queue'
 import { DocayaMark, DocayaAIMark } from './BrandMarks'
+import { developmentSignIn, uploadSharePointFile } from '../services/api'
 import './prototype.css'
 import './experience.css'
 import './typography.css'
@@ -71,6 +73,7 @@ import './brand.css'
 type Page =
   | 'home'
   | 'documents'
+  | 'library'
   | 'workflows'
   | 'operations'
   | 'search'
@@ -90,6 +93,7 @@ const navigation: {
 }[] = [
   { id: 'home', en: 'Overview', ar: 'نظرة عامة', icon: LayoutDashboard, group: 0 },
   { id: 'documents', en: 'Document register', ar: 'سجل الوثائق', icon: FolderOpen, group: 1 },
+  { id: 'library', en: 'Document Library', ar: 'مكتبة الوثائق', icon: BookOpen, group: 1 },
   { id: 'workflows', en: 'Approvals', ar: 'الاعتمادات', icon: Workflow, group: 1 },
   { id: 'operations', en: 'Staging & publishing', ar: 'التجهيز والنشر', icon: CloudUpload, group: 1 },
   { id: 'correspondence', en: 'Correspondence', ar: 'المراسلات', icon: Mail, group: 1 },
@@ -275,6 +279,23 @@ export default function PrototypeApp() {
       return () => clearTimeout(timer)
     }
   }, [toast])
+  useEffect(() => {
+    if (!signedIn) return
+    let cancelled = false
+    developmentSignIn().catch(() => {
+      if (!cancelled) {
+        setToast(
+          t(
+            'Backend API is not available. SharePoint actions will not run until the API is started and configured.',
+            'واجهة الخادم الخلفية غير متاحة. لن تعمل إجراءات شيربوينت حتى يتم تشغيلها وتهيئتها.',
+          ),
+        )
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [signedIn, t])
   const visible = useMemo(
     () => state.documents.filter((r) => canSee(r, role, department)),
     [state.documents, role, department],
@@ -316,6 +337,7 @@ export default function PrototypeApp() {
     state,
     setState,
     role,
+    department,
     lang,
     t,
     visible,
@@ -377,18 +399,89 @@ export default function PrototypeApp() {
     if (record.status === 'PendingApproval') resetApprovalView()
     notify(t(`Saved ${record.id}`, `تم حفظ ${record.id}`))
   }
+  const publishApprovedOriginal = async (record: RecordItem) => {
+    if (!record.sharePointFolderId) {
+      notify(t('No SharePoint folder is selected for this document.', 'لم يتم اختيار مجلد شيربوينت لهذه الوثيقة.'))
+      return
+    }
+    try {
+      const original = await readOriginal(record.id)
+      const file = original || new File(
+        [
+          `DOCAYA APPROVED DOCUMENT\n${record.id}\n${record.title}\n\n${record.summary}\n`,
+        ],
+        ensureApprovedSharePointFileName(record, 'txt'),
+        { type: 'text/plain' },
+      )
+      const uploadName = ensureApprovedSharePointFileName(record, file.name.split('.').pop() || 'txt')
+      const approvedFile = new File([file], uploadName, { type: file.type || record.mime || 'application/octet-stream' })
+      const response = await uploadSharePointFile(approvedFile, record.sharePointFolderId, {
+        documentId: record.id,
+        documentTitle: record.title,
+        documentVersion: record.version || 1,
+      })
+      setState((current) =>
+        addEvent(
+          {
+            ...current,
+            documents: current.documents.map((item) =>
+              item.id === record.id
+                ? {
+                    ...item,
+                    location: `SharePoint / ${record.sharePointFolderName || 'Selected folder'} / ${response.item.name}`,
+                    note: `Submitted to SharePoint as ${response.item.name}`,
+                    staging: 'Published / Approved',
+                  }
+                : item,
+            ),
+          },
+          role,
+          'Approved original submitted to SharePoint',
+          'تم إرسال الأصل المعتمد إلى شيربوينت',
+          record.id,
+          response.item.name,
+        ),
+      )
+      notify(t('Approved document submitted to SharePoint.', 'تم إرسال الوثيقة المعتمدة إلى شيربوينت.'))
+    } catch (problem) {
+      notify(
+        problem instanceof Error
+          ? problem.message
+          : t('SharePoint submission failed. Please try again.', 'فشل الإرسال إلى شيربوينت. حاول مرة أخرى.'),
+      )
+    }
+  }
   const act = (action: string, reason = '', step = '') => {
     try {
+      const before = state.documents.find((record) => record.id === selectedId)
       const next = changeRecord(state, selectedId, role, department, action, reason, step)
       setState(next)
       notify(t('Document updated. The activity trail has been recorded.', 'تم تحديث الوثيقة وتسجيل النشاط.'))
+      const after = next.documents.find((record) => record.id === selectedId)
+      if (
+        action === 'approve' &&
+        before?.status === 'PendingApproval' &&
+        after?.status === 'Published'
+      ) {
+        void publishApprovedOriginal(after)
+      }
       return true
     } catch (e) {
       notify(e instanceof Error ? e.message : String(e))
       return false
     }
   }
-  const enter = () => {
+  const enter = async () => {
+    try {
+      await developmentSignIn()
+    } catch {
+      notify(
+        t(
+          'Backend API is not available. SharePoint actions will not run until the API is started and configured.',
+          'واجهة الخادم الخلفية غير متاحة. لن تعمل إجراءات شيربوينت حتى يتم تشغيلها وتهيئتها.',
+        ),
+      )
+    }
     sessionStorage.setItem('docaya-prototype-session', 'yes')
     setSignedIn(true)
     if (state.settings.defaultArabic) setLang('ar')
@@ -928,6 +1021,7 @@ export default function PrototypeApp() {
             </>
           )}
           {page === 'documents' && <RegisterPage {...props} />}
+          {page === 'library' && <DocumentLibraryPage {...props} />}
           {page === 'workflows' && (
             <ApprovalQueue
               rows={reviewQueue}
@@ -1243,6 +1337,18 @@ export default function PrototypeApp() {
       )}
     </div>
   )
+}
+
+function ensureApprovedSharePointFileName(record: RecordItem, extension: string) {
+  const cleanedExtension = extension.replace(/[^a-z0-9]/gi, '').toLowerCase() || 'txt'
+  const slug = record.title
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase()
+    .slice(0, 80) || 'document'
+  return `DOCAYA__${record.id}__v${record.version || 1}__${slug}.${cleanedExtension}`
 }
 function Brand() {
   return (

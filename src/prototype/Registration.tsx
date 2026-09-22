@@ -15,6 +15,9 @@ import {
 import { Field, Modal, type Translate } from './ui'
 import { fingerprint, saveOriginal } from './files'
 import { DocumentPreview } from './DocumentPreview'
+import { ApiError, getSharePointFoldersByDepartment } from '../services/api'
+import { SharePointFolderTree } from '../components/SharePointFolderTree'
+import type { SharePointFolder } from '../types'
 import {
   applyClassification,
   suggestClassification,
@@ -76,6 +79,9 @@ export function Registration({
   const [suggestion, setSuggestion] = useState<ClassificationSuggestion>()
   const [confirmed, setConfirmed] = useState(false)
   const [sampleIndex, setSampleIndex] = useState(0)
+  const [sharePointFolders, setSharePointFolders] = useState<SharePointFolder[]>([])
+  const [sharePointLoading, setSharePointLoading] = useState(false)
+  const [sharePointError, setSharePointError] = useState('')
   const generation = useRef(0)
   const dirty = useRef(new Set<keyof RecordItem>(existing ? suggestedKeys : []))
   const [record, setRecord] = useState<RecordItem>(
@@ -122,10 +128,71 @@ export function Registration({
     },
     [],
   )
+  useEffect(() => {
+    if (!record.department) {
+      setSharePointFolders([])
+      setSharePointError('')
+      setSharePointLoading(false)
+      return
+    }
+    const controller = new AbortController()
+    setSharePointLoading(true)
+    setSharePointError('')
+    getSharePointFoldersByDepartment(record.department, controller.signal)
+      .then((response) => {
+        const folders = response.items || response.folders || []
+        setSharePointFolders(folders)
+        if (
+          record.sharePointFolderId &&
+          !folders.some((folder) => folder.id === record.sharePointFolderId)
+        ) {
+          setRecord((current) => ({
+            ...current,
+            sharePointFolderId: '',
+            sharePointFolderName: '',
+            sharePointFolderPath: '',
+          }))
+          setConfirmed(false)
+        }
+      })
+      .catch((problem) => {
+        if (controller.signal.aborted) return
+        setSharePointFolders([])
+        setSharePointError(
+          problem instanceof ApiError
+            ? problem.message
+            : t('SharePoint folders could not be loaded. Please try again.', 'تعذر تحميل مجلدات شيربوينت. حاول مرة أخرى.'),
+        )
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setSharePointLoading(false)
+      })
+    return () => controller.abort()
+  }, [record.department, record.sharePointFolderId, t])
   const update = <K extends keyof RecordItem>(key: K, value: RecordItem[K]) => {
     dirty.current.add(key)
     setConfirmed(false)
     setRecord((r) => ({ ...r, [key]: value }))
+  }
+  const updateDepartment = (department: string) => {
+    dirty.current.add('department')
+    setConfirmed(false)
+    setRecord((r) => ({
+      ...r,
+      department,
+      sharePointFolderId: '',
+      sharePointFolderName: '',
+      sharePointFolderPath: '',
+    }))
+  }
+  const updateSharePointFolder = (folder?: SharePointFolder | null) => {
+    setConfirmed(false)
+    setRecord((r) => ({
+      ...r,
+      sharePointFolderId: folder?.id || '',
+      sharePointFolderName: folder?.name || '',
+      sharePointFolderPath: folder?.path || '',
+    }))
   }
   const capture = async (selected?: File) => {
     if (!selected) return
@@ -177,7 +244,7 @@ export function Registration({
     if (busy) return
     if (
       status === 'PendingApproval' &&
-      (!confirmed || !record.title.trim() || !record.kind || !record.summary.trim())
+      (!confirmed || !record.title.trim() || !record.kind || !record.summary.trim() || !record.sharePointFolderId)
     ) {
       setError(
         t(
@@ -214,6 +281,10 @@ export function Registration({
   const advance = (e: FormEvent) => {
     e.preventDefault()
     if (busy || !record.fileName) return
+    if (step === 1 && !record.sharePointFolderId) {
+      setError(t('Select a SharePoint folder before review.', 'اختر مجلد شيربوينت قبل المراجعة.'))
+      return
+    }
     if (step === 2) void save('PendingApproval')
     else {
       setError('')
@@ -468,7 +539,7 @@ export function Registration({
                       <select
                         value={record.department}
                         disabled={role === 'Department Administrator'}
-                        onChange={(e) => update('department', e.target.value)}
+                        onChange={(e) => updateDepartment(e.target.value)}
                       >
                         {departments.map((v) => (
                           <option key={v} value={v}>
@@ -477,6 +548,36 @@ export function Registration({
                         ))}
                       </select>
                     </Field>
+                    <div className="p-span">
+                      <Field label={t('SharePoint Folder *', 'مجلد شيربوينت *')}>
+                        <SharePointFolderTree
+                          library={{ id: 'assigned-folders', name: t('Assigned folders', 'المجلدات المرتبطة') }}
+                          roots={sharePointFolders}
+                          selectedId={record.sharePointFolderId || ''}
+                          loading={sharePointLoading}
+                          error={sharePointError}
+                          emptyMessage={t(
+                            'No SharePoint folders are available for this department.',
+                            'لا توجد مجلدات شيربوينت متاحة لهذه الإدارة.',
+                          )}
+                          loadingMessage={t('Loading SharePoint folders...', 'جار تحميل مجلدات شيربوينت...')}
+                          errorMessage={t(
+                            'SharePoint folders could not be loaded. Please try again.',
+                            'تعذر تحميل مجلدات شيربوينت. حاول مرة أخرى.',
+                          )}
+                          selectLabel={t('Select SharePoint folder', 'اختر مجلد شيربوينت')}
+                          onSelect={updateSharePointFolder}
+                        />
+                        {sharePointError && (
+                          <small className="p-error-text">
+                            {t(
+                              'SharePoint folders could not be loaded. Please try again.',
+                              'تعذر تحميل مجلدات شيربوينت. حاول مرة أخرى.',
+                            )}
+                          </small>
+                        )}
+                      </Field>
+                    </div>
                     <Field label={t('Sensitivity *', 'درجة الحساسية *')}>
                       <select
                         value={record.sensitivity}
@@ -568,10 +669,12 @@ export function Registration({
                       <dd>
                         {local(record.flow, lang)} · {state.settings.sla} {t('hour SLA', 'ساعة للمعالجة')}
                       </dd>
+                      <dt>{t('Owning Department', 'الإدارة المالكة')}</dt>
+                      <dd>{local(record.department, lang)}</dd>
+                      <dt>{t('SharePoint Folder', 'مجلد شيربوينت')}</dt>
+                      <dd>{record.sharePointFolderName || t('Not selected', 'لم يتم الاختيار')}</dd>
                       <dt>{t('Destination after approval', 'الوجهة بعد الاعتماد')}</dt>
-                      <dd>
-                        {state.settings.library}/{record.department}/{record.kind}
-                      </dd>
+                      <dd>{record.sharePointFolderName || t('Selected folder', 'المجلد المحدد')}</dd>
                       <dt>{t('Original file', 'الملف الأصلي')}</dt>
                       <dd>
                         {record.fileName} · {(record.size / 1024).toFixed(1)} KB

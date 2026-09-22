@@ -1055,6 +1055,130 @@
 .admin-directory {
   margin-top: 4px;
 }
+.folder-access-panel {
+  margin-top: 4px;
+}
+.folder-access-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  margin: 20px 0 14px;
+}
+.folder-access-controls button {
+  min-height: 44px;
+}
+.folder-browser {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 18px;
+}
+.folder-breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.folder-breadcrumbs button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  font-weight: 700;
+  padding: 7px 10px;
+}
+.folder-browser-list {
+  display: grid;
+  gap: 8px;
+  max-height: 300px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  background: #fff;
+}
+.folder-browser-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 8px;
+  background: var(--surface-soft);
+}
+.folder-browser-row.selected {
+  border-color: var(--moi-gold-600);
+  box-shadow: 0 0 0 2px var(--moi-gold-100);
+}
+.folder-select-button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 3px;
+}
+.folder-select-button svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  color: var(--moi-green);
+}
+.folder-select-button strong,
+.folder-select-button small,
+.folder-selection-summary strong,
+.folder-selection-summary small {
+  display: block;
+}
+.folder-select-button small,
+.folder-selection-summary small {
+  margin-top: 3px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.folder-selection-summary {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--surface-soft);
+}
+.folder-selection-summary > span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.folder-access-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.folder-access-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+.folder-access-row svg {
+  width: 18px;
+  height: 18px;
+  color: var(--moi-green);
+}
+.folder-access-row strong,
+.folder-access-row small {
+  display: block;
+}
+.folder-access-row small {
+  margin-top: 3px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
 .admin-filters {
   display: flex;
   align-items: center;
@@ -1843,6 +1967,92 @@
 }
 .form-full {
   grid-column: 1 / -1;
+}
+.sp-folder-tree {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfaf7;
+  overflow: hidden;
+}
+.sp-folder-tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.sp-folder-root,
+.sp-folder-row {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  border-bottom: 1px solid var(--line);
+}
+.sp-folder-root {
+  gap: 9px;
+  padding: 0 13px;
+  color: var(--moi-green);
+  font-weight: 750;
+  background: var(--surface-soft);
+}
+.sp-folder-row {
+  gap: 4px;
+  padding-inline-start: calc(8px + (var(--sp-depth, 0) * 22px));
+  padding-inline-end: 8px;
+  background: white;
+}
+.sp-folder-row.selected {
+  background: var(--moi-gold-100);
+  box-shadow: inset 3px 0 0 var(--moi-gold-600);
+}
+.sp-folder-toggle,
+.sp-folder-name {
+  min-height: 34px;
+  border-radius: 7px;
+}
+.sp-folder-toggle {
+  width: 28px;
+  flex: 0 0 28px;
+  color: var(--muted);
+}
+.sp-folder-name {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  flex: 1;
+  padding: 0 8px;
+  text-align: left;
+  color: var(--ink);
+  font-weight: 700;
+}
+.sp-folder-name span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sp-folder-name svg {
+  color: var(--moi-gold-600);
+  flex: 0 0 auto;
+}
+.sp-file-row {
+  background: #fffefa;
+}
+.sp-file-name {
+  cursor: default;
+  color: var(--ink-soft);
+  font-weight: 650;
+}
+.sp-file-name svg {
+  color: var(--muted);
+}
+.sp-folder-state {
+  margin: 0;
+  padding: 13px 16px;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+.sp-folder-state.error {
+  color: var(--moi-red);
 }
 .choice-grid {
   display: grid;

@@ -9,6 +9,7 @@ const { AzureSearchAdapter } = await import('../services/azure-search.mjs')
 const { RedisCacheAdapter } = await import('../services/redis-cache.mjs')
 const { ServiceBusRestPublisher } = await import('../services/service-bus.mjs')
 const { AzureOpenAiAdapter } = await import('../services/azure-openai.mjs')
+const { SharePointService } = await import('../services/sharepoint.mjs')
 const repository = await createRepository(config)
 const search =
   config.searchEndpoint || config.searchIndex || config.searchApiKey ? new AzureSearchAdapter(config) : null
@@ -19,7 +20,8 @@ const assistant =
   config.openaiEndpoint && config.openaiDeployment && config.openaiApiKey
     ? new AzureOpenAiAdapter(config)
     : null
-const server = createDocayaServer({ config, repository, search, cache, events, assistant })
+const sharePoint = new SharePointService(config)
+const server = createDocayaServer({ config, repository, search, cache, events, assistant, sharePoint })
 
 server.listen(config.port, () => {
   console.log(

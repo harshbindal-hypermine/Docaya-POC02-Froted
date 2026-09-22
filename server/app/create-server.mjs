@@ -2,10 +2,12 @@ import crypto from 'node:crypto'
 import { createServer } from 'node:http'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { extname, resolve, sep } from 'node:path'
+import { Writable } from 'node:stream'
 import { createAuthenticator, authorize, issueDevelopmentToken } from '../middleware/auth.mjs'
 import { assert, HttpError } from '../middleware/errors.mjs'
 import { prepareRequest, readJson, sendError, sendJson } from '../middleware/http.mjs'
 import { audit } from '../services/audit.mjs'
+import { logSharePointError } from '../services/sharepoint.mjs'
 import { UploadService } from '../services/uploads.mjs'
 
 const documentStatuses = ['Draft', 'Under Review', 'Under Approval', 'Published', 'Superseded', 'Archived']
@@ -66,6 +68,7 @@ export function createDocayaServer({
   cache = null,
   events = null,
   assistant = null,
+  sharePoint = null,
 }) {
   const authenticate = createAuthenticator(config)
   const uploads = new UploadService(config, repository)
@@ -103,6 +106,7 @@ export function createDocayaServer({
             checkDependency(search).then((result) => ['search', result]),
             checkDependency(cache).then((result) => ['cache', result]),
             checkDependency(events).then((result) => ['events', result]),
+            checkDependency(sharePoint).then((result) => ['sharePoint', result]),
           ]),
         )
         const ready = Object.values(checks).every(
@@ -176,6 +180,26 @@ export function createDocayaServer({
             approver: cleanText(body.approver, 'approver', { max: 160 }),
             workflowStep: body.workflowStep || 1,
           }
+          assert(
+            body.sharePointFolderId,
+            422,
+            'SHAREPOINT_FOLDER_REQUIRED',
+            'Selected SharePoint folder is not available for this department.',
+          )
+          const folder = await repository.getDepartmentSharePointFolder(
+            actor,
+            input.department,
+            String(body.sharePointFolderId),
+          )
+          assert(
+            folder,
+            422,
+            'SHAREPOINT_FOLDER_NOT_ALLOWED',
+            'Selected SharePoint folder is not available for this department.',
+          )
+          input.sharePointFolderId = folder.sharePointFolderId
+          input.sharePointFolderName = folder.name
+          input.sharePointFolderPath = folder.path
           assert(
             documentStatuses.includes(input.status),
             422,
@@ -416,6 +440,153 @@ export function createDocayaServer({
           return sendJson(res, 200, { answer, references })
         }
 
+        if (route === '/api/v1/sharepoint/status' && req.method === 'GET') {
+          authorize(actor, 'document:read')
+          assert(
+            sharePoint,
+            503,
+            'SHAREPOINT_UNAVAILABLE',
+            'SharePoint integration is unavailable.',
+          )
+          try {
+            const status = await sharePoint.getConnectionStatus()
+            await audit(repository, req, actor, 'sharepoint.status', 'sharepoint', null)
+            return sendJson(res, 200, { status })
+          } catch (error) {
+            if (error instanceof HttpError) throw error
+            logSharePointError(error, req.requestId, 'status')
+            throw new HttpError(502, 'SHAREPOINT_CONNECTION_FAILED', 'Documents could not be loaded. Please try again.')
+          }
+        }
+        if (route === '/api/v1/sharepoint/explorer' && req.method === 'GET') {
+          authorize(actor, 'document:read')
+          assert(
+            sharePoint,
+            503,
+            'SHAREPOINT_UNAVAILABLE',
+            'SharePoint integration is unavailable.',
+          )
+          try {
+            const folderId = url.searchParams.get('folder_id') || ''
+            const explorer = await sharePoint.list(folderId)
+            await audit(repository, req, actor, 'sharepoint.list', 'sharepoint', folderId || 'root', 'success', {
+              count: explorer.items.length,
+            })
+            return sendJson(res, 200, explorer)
+          } catch (error) {
+            if (error instanceof HttpError) throw error
+            logSharePointError(error, req.requestId, 'list')
+            throw new HttpError(502, 'SHAREPOINT_LIST_FAILED', 'Documents could not be loaded. Please try again.')
+          }
+        }
+        if (route === '/api/v1/sharepoint/debug' && req.method === 'GET') {
+          authorize(actor, 'admin:read')
+          assert(
+            sharePoint,
+            503,
+            'SHAREPOINT_UNAVAILABLE',
+            'SharePoint integration is unavailable.',
+          )
+          try {
+            const debug = await sharePoint.debug()
+            await audit(repository, req, actor, 'sharepoint.debug', 'sharepoint', null, 'success', {
+              rootItems: debug.rootItems.length,
+              drives: debug.drives.length,
+            })
+            return sendJson(res, 200, debug)
+          } catch (error) {
+            if (error instanceof HttpError) throw error
+            logSharePointError(error, req.requestId, 'debug')
+            throw new HttpError(
+              502,
+              'SHAREPOINT_DEBUG_FAILED',
+              'SharePoint folders could not be loaded. Please try again.',
+            )
+          }
+        }
+        if (route === '/api/v1/sharepoint/folders' && req.method === 'GET') {
+          authorize(actor, 'document:read')
+          const department = cleanText(url.searchParams.get('department'), 'department', { max: 120 })
+          const folders = await repository.listDepartmentSharePointFolders(actor, department)
+          await audit(repository, req, actor, 'sharepoint.department_folders', 'sharepoint', department, 'success', {
+            count: folders.length,
+          })
+          return sendJson(res, 200, { department, items: folders, folders })
+        }
+        if (route === '/api/v1/sharepoint/upload' && req.method === 'POST') {
+          authorize(actor, 'document:write')
+          assert(
+            sharePoint,
+            503,
+            'SHAREPOINT_UNAVAILABLE',
+            'SharePoint integration is unavailable.',
+          )
+          try {
+            const item = await sharePoint.upload({
+              fileName: String(req.headers['x-file-name'] || ''),
+              mimeType: String(req.headers['content-type'] || 'application/octet-stream').toLowerCase(),
+              sizeBytes: Number(req.headers['x-file-size'] || req.headers['content-length'] || 0),
+              folderId: String(req.headers['x-sharepoint-folder-id'] || ''),
+              stream: req,
+            })
+            await audit(repository, req, actor, 'sharepoint.upload', 'sharepoint', item.id, 'success', {
+              size: item.size,
+              documentId: String(req.headers['x-docaya-document-id'] || ''),
+              documentTitle: String(req.headers['x-docaya-document-title'] || ''),
+              documentVersion: String(req.headers['x-docaya-document-version'] || ''),
+              folderId: String(req.headers['x-sharepoint-folder-id'] || ''),
+            })
+            return sendJson(res, 201, { item })
+          } catch (error) {
+            if (error instanceof HttpError) throw error
+            logSharePointError(error, req.requestId, 'upload')
+            throw new HttpError(502, 'SHAREPOINT_UPLOAD_FAILED', 'Upload failed. Please try again.')
+          }
+        }
+        const sharePointDownloadMatch = route.match(/^\/api\/v1\/sharepoint\/download\/([^/]+)$/)
+        if (sharePointDownloadMatch && req.method === 'GET') {
+          authorize(actor, 'document:read')
+          assert(
+            sharePoint,
+            503,
+            'SHAREPOINT_UNAVAILABLE',
+            'SharePoint integration is unavailable.',
+          )
+          try {
+            const download = await sharePoint.download(decodeURIComponent(sharePointDownloadMatch[1]))
+            await audit(repository, req, actor, 'sharepoint.download', 'sharepoint', download.item.id)
+            res.writeHead(200, {
+              'content-type': download.contentType,
+              'content-disposition': `attachment; filename="${download.item.name.replaceAll('"', '')}"`,
+              ...(download.contentLength ? { 'content-length': download.contentLength } : {}),
+            })
+            return download.response.body ? download.response.body.pipeTo(Writable.toWeb(res)) : res.end()
+          } catch (error) {
+            if (error instanceof HttpError) throw error
+            logSharePointError(error, req.requestId, 'download')
+            throw new HttpError(502, 'SHAREPOINT_DOWNLOAD_FAILED', 'Download failed. Please try again.')
+          }
+        }
+        const sharePointPreviewMatch = route.match(/^\/api\/v1\/sharepoint\/preview\/([^/]+)$/)
+        if (sharePointPreviewMatch && req.method === 'GET') {
+          authorize(actor, 'document:read')
+          assert(
+            sharePoint,
+            503,
+            'SHAREPOINT_UNAVAILABLE',
+            'SharePoint integration is unavailable.',
+          )
+          try {
+            const preview = await sharePoint.getPreview(decodeURIComponent(sharePointPreviewMatch[1]))
+            await audit(repository, req, actor, 'sharepoint.preview', 'sharepoint', preview.id)
+            return sendJson(res, 200, { preview })
+          } catch (error) {
+            if (error instanceof HttpError) throw error
+            logSharePointError(error, req.requestId, 'preview')
+            throw new HttpError(502, 'SHAREPOINT_PREVIEW_FAILED', 'Preview could not be opened. Please try again.')
+          }
+        }
+
         if (route === '/api/v1/workflows' && req.method === 'GET') {
           authorize(actor, 'workflow:read')
           return sendJson(res, 200, { workflows: await repository.listWorkflows(actor) })
@@ -626,9 +797,76 @@ export function createDocayaServer({
           await audit(repository, req, actor, 'admin.settings.update', 'settings', actor.tenantId)
           return sendJson(res, 200, { settings })
         }
+        if (route === '/api/v1/admin/sharepoint/folders' && req.method === 'GET') {
+          authorize(actor, 'admin:read')
+          assert(
+            sharePoint,
+            503,
+            'SHAREPOINT_UNAVAILABLE',
+            'SharePoint integration is unavailable.',
+          )
+          try {
+            const folderId = url.searchParams.get('folder_id') || ''
+            const folders = await sharePoint.list(folderId)
+            await audit(repository, req, actor, 'admin.sharepoint.folders', 'sharepoint', null, 'success', {
+              count: folders.items.length,
+            })
+            return sendJson(res, 200, folders)
+          } catch (error) {
+            if (error instanceof HttpError) throw error
+            logSharePointError(error, req.requestId, 'admin-list-folders')
+            throw new HttpError(
+              502,
+              'SHAREPOINT_FOLDER_LIST_FAILED',
+              'SharePoint folders could not be loaded. Please try again.',
+            )
+          }
+        }
+        if (route === '/api/v1/admin/department-sharepoint-folders' && req.method === 'GET') {
+          authorize(actor, 'admin:read')
+          return sendJson(res, 200, { items: await repository.listDepartmentSharePointFolderAccess(actor) })
+        }
+        const departmentFolderRoute = route.match(/^\/api\/v1\/admin\/departments\/([^/]+)\/sharepoint-folders(?:\/([^/]+))?$/)
+        if (departmentFolderRoute && req.method === 'GET' && !departmentFolderRoute[2]) {
+          authorize(actor, 'admin:read')
+          const department = cleanText(decodeURIComponent(departmentFolderRoute[1]), 'department', { max: 120 })
+          return sendJson(res, 200, {
+            department,
+            items: await repository.listDepartmentSharePointFolders(actor, department),
+          })
+        }
+        if (departmentFolderRoute && req.method === 'POST' && !departmentFolderRoute[2]) {
+          authorize(actor, 'admin:write')
+          const department = cleanText(decodeURIComponent(departmentFolderRoute[1]), 'department', { max: 120 })
+          const body = await readJson(req, config.bodyLimit)
+          const folderId = cleanText(body.id || body.sharePointFolderId, 'sharePointFolderId', { max: 300 })
+          const folder = await repository.addDepartmentSharePointFolder(actor, department, {
+            id: uuid('spmap'),
+            sharePointFolderId: folderId,
+            name: cleanText(body.name, 'name', { max: 240 }),
+            path: cleanText(body.path, 'path', { max: 1000 }),
+            webUrl: body.webUrl ? cleanText(body.webUrl, 'webUrl', { max: 2000 }) : null,
+          })
+          await audit(repository, req, actor, 'admin.folder_access.add', 'sharepoint-folder-access', folder.id, 'success', {
+            department,
+            sharePointFolderId: folder.sharePointFolderId,
+          })
+          return sendJson(res, 201, { item: folder })
+        }
+        if (departmentFolderRoute && req.method === 'DELETE' && departmentFolderRoute[2]) {
+          authorize(actor, 'admin:write')
+          const department = cleanText(decodeURIComponent(departmentFolderRoute[1]), 'department', { max: 120 })
+          const folderId = decodeURIComponent(departmentFolderRoute[2])
+          const removed = await repository.removeDepartmentSharePointFolder(actor, department, folderId)
+          assert(removed, 404, 'NOT_FOUND', 'Folder access mapping not found.')
+          await audit(repository, req, actor, 'admin.folder_access.remove', 'sharepoint-folder-access', folderId, 'success', {
+            department,
+          })
+          return sendJson(res, 200, { success: true })
+        }
 
         const knownPath = route.match(
-          /^\/api\/v1\/(documents|trash|uploads|search|workflows|notifications|audit|admin|assistant)(?:\/|$)/,
+          /^\/api\/v1\/(documents|trash|uploads|search|workflows|notifications|audit|admin|assistant|sharepoint)(?:\/|$)/,
         )
         if (knownPath) {
           res.setHeader('allow', allowedMethods(route))

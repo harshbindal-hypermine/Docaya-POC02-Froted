@@ -27,7 +27,7 @@ export function prepareRequest(req, res, config) {
     res.setHeader('vary', 'origin')
     res.setHeader(
       'access-control-allow-headers',
-      'authorization, content-type, idempotency-key, x-request-id, content-range',
+      'authorization, content-type, idempotency-key, x-request-id, content-range, x-file-name, x-file-size, x-sharepoint-folder-id, x-docaya-document-id, x-docaya-document-title, x-docaya-document-version',
     )
     res.setHeader('access-control-allow-methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
   } else if (origin) {

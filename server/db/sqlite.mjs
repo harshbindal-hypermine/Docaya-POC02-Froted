@@ -29,6 +29,9 @@ const mapDocument = (row) =>
     owner: row.owner_name,
     department: row.department,
     library: row.library,
+    sharePointFolderId: row.sharepoint_folder_id,
+    sharePointFolderName: row.sharepoint_folder_name,
+    sharePointFolderPath: row.sharepoint_folder_path,
     language: row.language,
     sourcePath: row.source_path,
     summary: row.summary,
@@ -45,6 +48,23 @@ const mapDocument = (row) =>
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at,
+  }
+
+const mapDepartmentSharePointFolder = (row) =>
+  row && {
+    id: row.sharepoint_folder_id,
+    mappingId: row.id,
+    department: row.department,
+    sharePointFolderId: row.sharepoint_folder_id,
+    name: row.sharepoint_folder_name,
+    path: row.sharepoint_folder_path,
+    webUrl: row.sharepoint_web_url,
+    type: 'folder',
+    size: null,
+    mimeType: null,
+    lastModifiedDateTime: null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   }
 
 export class SqliteRepository {
@@ -297,8 +317,8 @@ export class SqliteRepository {
     const timestamp = now()
     this.db
       .prepare(
-        `INSERT INTO documents (id,tenant_id,workspace_id,folder_id,title,document_number,doc_type,status,classification,owner_id,owner_name,department,library,language,source_path,summary,retention,current_revision,next_review,mime_type,size_bytes,content_hash,reviewer,approver,workflow_step,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO documents (id,tenant_id,workspace_id,folder_id,title,document_number,doc_type,status,classification,owner_id,owner_name,department,library,sharepoint_folder_id,sharepoint_folder_name,sharepoint_folder_path,language,source_path,summary,retention,current_revision,next_review,mime_type,size_bytes,content_hash,reviewer,approver,workflow_step,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         input.id,
@@ -314,6 +334,9 @@ export class SqliteRepository {
         actor.name,
         input.department || actor.department || 'Unassigned',
         input.library || 'Corporate Governance',
+        input.sharePointFolderId || null,
+        input.sharePointFolderName || null,
+        input.sharePointFolderPath || null,
         input.language || 'English',
         input.sourcePath || null,
         input.summary || '',
@@ -589,6 +612,72 @@ export class SqliteRepository {
         next.updatedAt,
       )
     return this.getSettings(actor)
+  }
+
+  listDepartmentSharePointFolders(actor, department) {
+    return this.db
+      .prepare(
+        `SELECT * FROM department_sharepoint_folder_access
+         WHERE tenant_id=? AND department=?
+         ORDER BY sharepoint_folder_path,sharepoint_folder_name`,
+      )
+      .all(actor.tenantId, department)
+      .map(mapDepartmentSharePointFolder)
+  }
+
+  listDepartmentSharePointFolderAccess(actor) {
+    return this.db
+      .prepare(
+        `SELECT * FROM department_sharepoint_folder_access
+         WHERE tenant_id=?
+         ORDER BY department,sharepoint_folder_path,sharepoint_folder_name`,
+      )
+      .all(actor.tenantId)
+      .map(mapDepartmentSharePointFolder)
+  }
+
+  getDepartmentSharePointFolder(actor, department, folderId) {
+    return mapDepartmentSharePointFolder(
+      this.db
+        .prepare(
+          `SELECT * FROM department_sharepoint_folder_access
+           WHERE tenant_id=? AND department=? AND sharepoint_folder_id=?`,
+        )
+        .get(actor.tenantId, department, folderId),
+    )
+  }
+
+  addDepartmentSharePointFolder(actor, department, folder) {
+    const timestamp = now()
+    this.db
+      .prepare(
+        `INSERT INTO department_sharepoint_folder_access(id,tenant_id,department,sharepoint_folder_id,sharepoint_folder_name,sharepoint_folder_path,sharepoint_web_url,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(tenant_id,department,sharepoint_folder_id) DO UPDATE SET sharepoint_folder_name=excluded.sharepoint_folder_name,sharepoint_folder_path=excluded.sharepoint_folder_path,sharepoint_web_url=excluded.sharepoint_web_url,updated_at=excluded.updated_at`,
+      )
+      .run(
+        folder.id,
+        actor.tenantId,
+        department,
+        folder.sharePointFolderId,
+        folder.name,
+        folder.path,
+        folder.webUrl || null,
+        timestamp,
+        timestamp,
+      )
+    return this.getDepartmentSharePointFolder(actor, department, folder.sharePointFolderId)
+  }
+
+  removeDepartmentSharePointFolder(actor, department, folderId) {
+    return Boolean(
+      this.db
+        .prepare(
+          `DELETE FROM department_sharepoint_folder_access
+           WHERE tenant_id=? AND department=? AND sharepoint_folder_id=?`,
+        )
+        .run(actor.tenantId, department, folderId).changes,
+    )
   }
 
   appendAudit(event) {

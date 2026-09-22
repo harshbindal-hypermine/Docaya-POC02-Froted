@@ -28,7 +28,72 @@ const mockAssistant = {
     return 'Mock answer grounded in the supplied controlled-document context.'
   },
 }
-const server = createDocayaServer({ config, repository, assistant: mockAssistant })
+const mockSharePoint = {
+  async healthCheck() {
+    return { status: 'ok' }
+  },
+  async listFolders() {
+    return {
+      items: [
+        {
+          id: 'root-uploads',
+          name: 'Docaya Uploads',
+          type: 'folder',
+          size: null,
+          path: '/Docaya Uploads',
+          webUrl: 'https://contoso.sharepoint.com/sites/docaya/Shared%20Documents/Docaya%20Uploads',
+          lastModifiedDateTime: '2026-09-20T11:10:24Z',
+          mimeType: null,
+        },
+        {
+          id: 'root-library',
+          name: 'Document Library',
+          type: 'folder',
+          size: null,
+          path: '/Document Library',
+          webUrl: 'https://contoso.sharepoint.com/sites/docaya/Shared%20Documents/Document%20Library',
+          lastModifiedDateTime: '2026-09-19T08:32:40Z',
+          mimeType: null,
+        },
+      ],
+      drive: { id: 'drive-id', name: 'Documents' },
+      site: { hostname: 'hypermineai.sharepoint.com', path: '/sites/DocayaDocLibrary-Dev' },
+    }
+  },
+  async list(folderId = '') {
+    if (!folderId) return this.listFolders()
+    return {
+      folderId,
+      items: [
+        {
+          id: 'hr-policies',
+          name: 'HR Policies',
+          type: 'folder',
+          size: null,
+          path: '/Document Library/HR Policies',
+          webUrl: 'https://contoso.sharepoint.com/sites/docaya/Shared%20Documents/Document%20Library/HR%20Policies',
+          lastModifiedDateTime: '2026-09-20T12:00:00Z',
+          mimeType: null,
+        },
+      ],
+      drive: { id: 'drive-id', name: 'Documents' },
+      site: { hostname: 'hypermineai.sharepoint.com', path: '/sites/DocayaDocLibrary-Dev' },
+    }
+  },
+  async debug() {
+    return {
+      site: {
+        id: 'site-id',
+        displayName: 'Docaya Doc Library - Dev',
+        webUrl: 'https://hypermineai.sharepoint.com/sites/DocayaDocLibrary-Dev',
+      },
+      drives: [{ id: 'drive-id', name: 'Documents' }],
+      drive: { id: 'drive-id', name: 'Documents' },
+      rootItems: (await this.listFolders()).items,
+    }
+  },
+}
+const server = createDocayaServer({ config, repository, assistant: mockAssistant, sharePoint: mockSharePoint })
 const unconfiguredServer = createDocayaServer({ config, repository, assistant: null })
 let base = ''
 let unconfiguredBase = ''
@@ -220,6 +285,107 @@ describe('v1 API contract', () => {
     })
     expect(missing.status).toBe(404)
   })
+  it('uses explicit department SharePoint folder mappings for registration', async () => {
+    const financeInvoice = {
+      id: 'sp-folder-invoices',
+      name: 'Invoices',
+      path: '/Document Library/Invoices',
+      webUrl: 'https://contoso.sharepoint.com/sites/docaya/Shared%20Documents/Invoices',
+    }
+    const financeReports = {
+      id: 'sp-folder-reports',
+      name: 'Financial Reports',
+      path: '/Document Library/Financial Reports',
+      webUrl: 'https://contoso.sharepoint.com/sites/docaya/Shared%20Documents/Reports',
+    }
+    const hrPolicies = {
+      id: 'sp-folder-hr-policies',
+      name: 'HR Policies',
+      path: '/Document Library/Policies/HR Policies',
+      webUrl: 'https://contoso.sharepoint.com/sites/docaya/Shared%20Documents/Policies/HR%20Policies',
+    }
+
+    for (const [department, folder] of [
+      ['Finance', financeInvoice],
+      ['Finance', financeReports],
+      ['HR', hrPolicies],
+    ]) {
+      const response = await call(
+        `/api/v1/admin/departments/${encodeURIComponent(department)}/sharepoint-folders`,
+        admin,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(folder),
+        },
+      )
+      expect(response.status).toBe(201)
+    }
+
+    const financeFolders = await call('/api/v1/sharepoint/folders?department=Finance')
+    expect(financeFolders.status).toBe(200)
+    const financePayload = await financeFolders.json()
+    expect(financePayload.items.map((folder) => folder.id)).toEqual([
+      financeReports.id,
+      financeInvoice.id,
+    ])
+    expect(financePayload.items[1]).toMatchObject({
+      id: financeInvoice.id,
+      sharePointFolderId: financeInvoice.id,
+      name: 'Invoices',
+      department: 'Finance',
+    })
+
+    const created = await call('/api/v1/documents', admin, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'finance-invoice-folder' },
+      body: JSON.stringify({
+        title: 'Quarterly invoice register',
+        number: 'FIN-INV-00001',
+        type: 'Record',
+        department: 'Finance',
+        library: 'Corporate Governance',
+        language: 'English',
+        summary: 'Finance registration using an explicitly assigned SharePoint folder.',
+        retention: '7 years',
+        nextReview: '2027-09-03',
+        reviewer: 'Finance Quality Lead',
+        approver: 'Finance Director',
+        sharePointFolderId: financeInvoice.id,
+      }),
+    })
+    expect(created.status).toBe(201)
+    expect((await created.json()).document).toMatchObject({
+      department: 'Finance',
+      sharePointFolderId: financeInvoice.id,
+      sharePointFolderName: 'Invoices',
+      sharePointFolderPath: '/Document Library/Invoices',
+    })
+
+    const rejected = await call('/api/v1/documents', admin, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'finance-hr-folder' },
+      body: JSON.stringify({
+        title: 'Wrong folder registration',
+        number: 'FIN-INV-00002',
+        type: 'Record',
+        department: 'Finance',
+        library: 'Corporate Governance',
+        language: 'English',
+        summary: 'This should not be allowed.',
+        retention: '7 years',
+        nextReview: '2027-09-03',
+        reviewer: 'Finance Quality Lead',
+        approver: 'Finance Director',
+        sharePointFolderId: hrPolicies.id,
+      }),
+    })
+    expect(rejected.status).toBe(422)
+    expect((await rejected.json()).error).toMatchObject({
+      code: 'SHAREPOINT_FOLDER_NOT_ALLOWED',
+      message: 'Selected SharePoint folder is not available for this department.',
+    })
+  })
   it('prevents an admin from suspending or deprovisioning their own account', async () => {
     const me = await (await call('/api/v1/auth/me')).json()
     const response = await call(`/api/v1/admin/users/${me.user.id}`, admin, {
@@ -236,6 +402,44 @@ describe('v1 API contract', () => {
       body: JSON.stringify({ question: 'What is the Data Protection Policy status?' }),
     })
     expect(response.status).toBe(401)
+  })
+  it('rejects unauthenticated SharePoint explorer access', async () => {
+    const response = await call('/api/v1/sharepoint/explorer', '')
+    expect(response.status).toBe(401)
+  })
+  it('lets admins browse SharePoint root folders and child folders by item id', async () => {
+    const rootResponse = await call('/api/v1/admin/sharepoint/folders')
+    expect(rootResponse.status).toBe(200)
+    const rootPayload = await rootResponse.json()
+    expect(rootPayload.items.map((item) => item.name)).toEqual(['Docaya Uploads', 'Document Library'])
+
+    const childResponse = await call('/api/v1/admin/sharepoint/folders?folder_id=root-library')
+    expect(childResponse.status).toBe(200)
+    const childPayload = await childResponse.json()
+    expect(childPayload).toMatchObject({ folderId: 'root-library' })
+    expect(childPayload.items).toEqual([expect.objectContaining({ id: 'hr-policies', name: 'HR Policies' })])
+  })
+  it('returns protected safe SharePoint diagnostics', async () => {
+    const response = await call('/api/v1/sharepoint/debug')
+    expect(response.status).toBe(200)
+    const payload = await response.json()
+    expect(payload.site).toMatchObject({
+      id: 'site-id',
+      displayName: 'Docaya Doc Library - Dev',
+      webUrl: 'https://hypermineai.sharepoint.com/sites/DocayaDocLibrary-Dev',
+    })
+    expect(payload.drive).toMatchObject({ id: 'drive-id', name: 'Documents' })
+    expect(payload.rootItems.map((item) => item.name)).toEqual(['Docaya Uploads', 'Document Library'])
+    expect(JSON.stringify(payload)).not.toContain('token')
+    expect(JSON.stringify(payload)).not.toContain('secret')
+  })
+  it('returns a SharePoint-specific error when the integration is unavailable', async () => {
+    const response = await callUnconfigured('/api/v1/sharepoint/explorer')
+    expect(response.status).toBe(503)
+    expect((await response.json()).error).toMatchObject({
+      code: 'SHAREPOINT_UNAVAILABLE',
+      message: 'SharePoint integration is unavailable.',
+    })
   })
   it('validates the assistant question length', async () => {
     const response = await call('/api/v1/assistant/ask', admin, {

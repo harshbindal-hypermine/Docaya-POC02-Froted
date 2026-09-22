@@ -15,6 +15,9 @@ const mapDocument = (row) =>
     owner: row.owner_name,
     department: row.department,
     library: row.library,
+    sharePointFolderId: row.sharepoint_folder_id,
+    sharePointFolderName: row.sharepoint_folder_name,
+    sharePointFolderPath: row.sharepoint_folder_path,
     language: row.language,
     sourcePath: row.source_path,
     summary: row.summary,
@@ -31,6 +34,22 @@ const mapDocument = (row) =>
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at,
+  }
+const mapDepartmentSharePointFolder = (row) =>
+  row && {
+    id: row.sharepoint_folder_id,
+    mappingId: row.id,
+    department: row.department,
+    sharePointFolderId: row.sharepoint_folder_id,
+    name: row.sharepoint_folder_name,
+    path: row.sharepoint_folder_path,
+    webUrl: row.sharepoint_web_url,
+    type: 'folder',
+    size: null,
+    mimeType: null,
+    lastModifiedDateTime: null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   }
 const now = () => new Date().toISOString()
 
@@ -141,6 +160,9 @@ export class PostgresRepository {
         actor.name,
         input.department || 'Unassigned',
         input.library || 'Corporate Governance',
+        input.sharePointFolderId || null,
+        input.sharePointFolderName || null,
+        input.sharePointFolderPath || null,
         input.language || 'English',
         input.sourcePath || null,
         input.summary || '',
@@ -157,7 +179,7 @@ export class PostgresRepository {
         timestamp,
       ]
       const result = await client.query(
-        `INSERT INTO documents(id,tenant_id,workspace_id,folder_id,title,document_number,doc_type,status,classification,owner_id,owner_name,department,library,language,source_path,summary,retention,current_revision,next_review,mime_type,size_bytes,content_hash,reviewer,approver,workflow_step,created_at,updated_at) VALUES (${values.map((_, index) => `$${index + 1}`).join(',')}) RETURNING *`,
+        `INSERT INTO documents(id,tenant_id,workspace_id,folder_id,title,document_number,doc_type,status,classification,owner_id,owner_name,department,library,sharepoint_folder_id,sharepoint_folder_name,sharepoint_folder_path,language,source_path,summary,retention,current_revision,next_review,mime_type,size_bytes,content_hash,reviewer,approver,workflow_step,created_at,updated_at) VALUES (${values.map((_, index) => `$${index + 1}`).join(',')}) RETURNING *`,
         values,
       )
       return mapDocument(result.rows[0])
@@ -441,6 +463,85 @@ export class PostgresRepository {
       ),
     )
     return this.getSettings(actor)
+  }
+  async listDepartmentSharePointFolders(actor, department) {
+    return this.tenant(
+      actor,
+      async (client) =>
+        (
+          await client.query(
+            `SELECT * FROM department_sharepoint_folder_access
+             WHERE tenant_id=$1 AND department=$2
+             ORDER BY sharepoint_folder_path,sharepoint_folder_name`,
+            [actor.tenantId, department],
+          )
+        ).rows.map(mapDepartmentSharePointFolder),
+    )
+  }
+  async listDepartmentSharePointFolderAccess(actor) {
+    return this.tenant(
+      actor,
+      async (client) =>
+        (
+          await client.query(
+            `SELECT * FROM department_sharepoint_folder_access
+             WHERE tenant_id=$1
+             ORDER BY department,sharepoint_folder_path,sharepoint_folder_name`,
+            [actor.tenantId],
+          )
+        ).rows.map(mapDepartmentSharePointFolder),
+    )
+  }
+  async getDepartmentSharePointFolder(actor, department, folderId) {
+    return this.tenant(
+      actor,
+      async (client) =>
+        mapDepartmentSharePointFolder(
+          (
+            await client.query(
+              `SELECT * FROM department_sharepoint_folder_access
+               WHERE tenant_id=$1 AND department=$2 AND sharepoint_folder_id=$3`,
+              [actor.tenantId, department, folderId],
+            )
+          ).rows[0],
+        ),
+    )
+  }
+  async addDepartmentSharePointFolder(actor, department, folder) {
+    return this.tenant(actor, async (client) => {
+      const result = await client.query(
+        `INSERT INTO department_sharepoint_folder_access(id,tenant_id,department,sharepoint_folder_id,sharepoint_folder_name,sharepoint_folder_path,sharepoint_web_url,created_at,updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
+         ON CONFLICT (tenant_id,department,sharepoint_folder_id) DO UPDATE SET sharepoint_folder_name=EXCLUDED.sharepoint_folder_name,sharepoint_folder_path=EXCLUDED.sharepoint_folder_path,sharepoint_web_url=EXCLUDED.sharepoint_web_url,updated_at=EXCLUDED.updated_at
+         RETURNING *`,
+        [
+          folder.id,
+          actor.tenantId,
+          department,
+          folder.sharePointFolderId,
+          folder.name,
+          folder.path,
+          folder.webUrl || null,
+          now(),
+        ],
+      )
+      return mapDepartmentSharePointFolder(result.rows[0])
+    })
+  }
+  async removeDepartmentSharePointFolder(actor, department, folderId) {
+    return this.tenant(
+      actor,
+      async (client) =>
+        Boolean(
+          (
+            await client.query(
+              `DELETE FROM department_sharepoint_folder_access
+               WHERE tenant_id=$1 AND department=$2 AND sharepoint_folder_id=$3`,
+              [actor.tenantId, department, folderId],
+            )
+          ).rowCount,
+        ),
+    )
   }
   async appendAudit(event) {
     const actor = { tenantId: event.tenantId }

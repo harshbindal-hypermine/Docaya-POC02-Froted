@@ -1,7 +1,9 @@
-import { useState, type ChangeEvent, type FormEvent } from 'react'
+import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 import { ArrowLeft, ArrowRight, Check, FileCheck2, FolderPlus, Info, ShieldCheck, X } from 'lucide-react'
+import { SharePointFolderTree } from '../../components/SharePointFolderTree'
 import { departments, documentTypes, libraries } from '../../data/mockData'
-import type { Classification, RegistrationInput, UserProfile } from '../../types'
+import { getSharePointFoldersByDepartment } from '../../services/api'
+import type { Classification, RegistrationInput, SharePointFolder, UserProfile } from '../../types'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
 
 type Props = {
@@ -32,10 +34,72 @@ export function RegisterDocumentModal({ user, onClose, onSave }: Props) {
     approver: 'Department Director',
   })
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [sharePointFolders, setSharePointFolders] = useState<SharePointFolder[]>([])
+  const [sharePointLoading, setSharePointLoading] = useState(false)
+  const [sharePointError, setSharePointError] = useState('')
 
   const numberPreview = generateNumber(form)
   const set = <K extends keyof RegistrationInput>(key: K, value: RegistrationInput[K]) =>
     setForm((current) => ({ ...current, [key]: value }))
+
+  useEffect(() => {
+    if (!form.department) {
+      setSharePointFolders([])
+      setSharePointError('')
+      return
+    }
+    const controller = new AbortController()
+    setSharePointLoading(true)
+    setSharePointError('')
+    getSharePointFoldersByDepartment(form.department, controller.signal)
+      .then((response) => {
+        const folders = response.items || response.folders || []
+        setSharePointFolders(folders)
+        setForm((current) => {
+          if (
+            current.sharePointFolderId &&
+            !folders.some((folder) => folder.id === current.sharePointFolderId)
+          ) {
+            return {
+              ...current,
+              sharePointFolderId: '',
+              sharePointFolderName: '',
+              sharePointFolderPath: '',
+            }
+          }
+          return current
+        })
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return
+        const message = 'SharePoint folders could not be loaded. Please try again.'
+        setSharePointFolders([])
+        setSharePointError(message)
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setSharePointLoading(false)
+      })
+    return () => controller.abort()
+  }, [form.department])
+
+  const setDepartment = (department: string) => {
+    setForm((current) => ({
+      ...current,
+      department,
+      sharePointFolderId: '',
+      sharePointFolderName: '',
+      sharePointFolderPath: '',
+    }))
+  }
+
+  const setSharePointFolder = (folder?: SharePointFolder | null) => {
+    setForm((current) => ({
+      ...current,
+      sharePointFolderId: folder?.id || '',
+      sharePointFolderName: folder?.name || '',
+      sharePointFolderPath: folder?.path || '',
+    }))
+  }
 
   const validateStep = () => {
     if (
@@ -43,7 +107,7 @@ export function RegisterDocumentModal({ user, onClose, onSave }: Props) {
       (!selectedFile || !form.title.trim() || !form.type || !form.library || !form.department)
     )
       return 'Complete all required metadata fields.'
-    if (step === 1 && (!form.classification || !form.retention || !form.nextReview))
+    if (step === 1 && (!form.classification || !form.retention || !form.nextReview || !form.sharePointFolderId))
       return 'Complete the classification and control fields.'
     if (step === 2 && (!form.reviewer.trim() || !form.approver.trim()))
       return 'Specify both the reviewer and final approver.'
@@ -166,7 +230,7 @@ export function RegisterDocumentModal({ user, onClose, onSave }: Props) {
                   </select>
                 </Field>
                 <Field label="Owning department" required>
-                  <select value={form.department} onChange={(event) => set('department', event.target.value)}>
+                  <select value={form.department} onChange={(event) => setDepartment(event.target.value)}>
                     <option value="">Select…</option>
                     {departments.map((item) => (
                       <option key={item}>{item}</option>
@@ -214,6 +278,21 @@ export function RegisterDocumentModal({ user, onClose, onSave }: Props) {
                       ),
                     )}
                   </div>
+                </Field>
+                <Field label="SharePoint folder" required full>
+                  <SharePointFolderTree
+                    library={{ id: 'assigned-folders', name: 'Assigned folders' }}
+                    roots={sharePointFolders}
+                    selectedId={form.sharePointFolderId || ''}
+                    loading={sharePointLoading}
+                    error={sharePointError}
+                    emptyMessage="No SharePoint folders are available for this department."
+                    loadingMessage="Loading SharePoint folders..."
+                    errorMessage="SharePoint folders could not be loaded. Please try again."
+                    selectLabel="Select destination folder"
+                    onSelect={setSharePointFolder}
+                  />
+                  {sharePointError && <small className="field-hint error">{sharePointError}</small>}
                 </Field>
                 <Field label="Retention period" required>
                   <select value={form.retention} onChange={(event) => set('retention', event.target.value)}>
@@ -309,6 +388,10 @@ export function RegisterDocumentModal({ user, onClose, onSave }: Props) {
                   <div>
                     <dt>Library</dt>
                     <dd>{form.library}</dd>
+                  </div>
+                  <div>
+                    <dt>SharePoint folder</dt>
+                    <dd>{form.sharePointFolderName || 'Not selected'}</dd>
                   </div>
                   <div>
                     <dt>Classification</dt>

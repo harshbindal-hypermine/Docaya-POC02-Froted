@@ -2,6 +2,7 @@ import {
   Activity,
   Database,
   FileCheck2,
+  FolderKey,
   HardDrive,
   Search,
   ServerCog,
@@ -11,9 +12,20 @@ import {
   Users,
   X,
 } from 'lucide-react'
-import { useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { SharePointFolderTree, foldersOnly } from '../../components/SharePointFolderTree'
+import { departments } from '../../data/mockData'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
-import type { AdminUser, Readiness, TenantSettings } from '../../services/api'
+import {
+  addDepartmentSharePointFolderAccess,
+  listAdminSharePointFolders,
+  listDepartmentSharePointFolderAccess,
+  removeDepartmentSharePointFolderAccess,
+  type AdminUser,
+  type Readiness,
+  type TenantSettings,
+} from '../../services/api'
+import type { DepartmentSharePointFolder, SharePointFolder, SharePointItem } from '../../types'
 
 type Overview = {
   users: number
@@ -73,7 +85,14 @@ export function AdminCenter({
   onUpdateUser: (id: string, changes: Partial<Pick<AdminUser, 'role' | 'status'>>) => Promise<void>
 }) {
   const [saving, setSaving] = useState(false)
-  const [section, setSection] = useState<'overview' | 'users' | 'settings'>('overview')
+  const [section, setSection] = useState<'overview' | 'users' | 'folder-access' | 'settings'>('overview')
+  const [folderDepartment, setFolderDepartment] = useState(departments[0] || '')
+  const [availableFolders, setAvailableFolders] = useState<SharePointItem[]>([])
+  const [folderAccess, setFolderAccess] = useState<DepartmentSharePointFolder[]>([])
+  const [selectedFolder, setSelectedFolder] = useState<SharePointFolder | null>(null)
+  const [folderLibraryName, setFolderLibraryName] = useState('Documents')
+  const [folderBusy, setFolderBusy] = useState(false)
+  const [folderError, setFolderError] = useState('')
   const [userQuery, setUserQuery] = useState('')
   const [userStatus, setUserStatus] = useState('all')
   const [inviteOpen, setInviteOpen] = useState(false)
@@ -92,6 +111,32 @@ export function AdminCenter({
   )
   const activeUsers = users.filter((user) => user.status === 'active').length
   const servicesReady = readiness?.status === 'ready'
+  const selectedDepartmentAccess = folderAccess.filter((item) => item.department === folderDepartment)
+  const selectedFolderAlreadyAssigned = Boolean(
+    selectedFolder && selectedDepartmentAccess.some((item) => item.sharePointFolderId === selectedFolder.id),
+  )
+  useEffect(() => {
+    if (section !== 'folder-access') return
+    const controller = new AbortController()
+    setFolderBusy(true)
+    setFolderError('')
+    Promise.all([listAdminSharePointFolders('', controller.signal), listDepartmentSharePointFolderAccess(controller.signal)])
+      .then(([folders, mappings]) => {
+        setAvailableFolders(folders.items)
+        setFolderLibraryName(folders.drive?.name || 'Documents')
+        setFolderAccess(mappings)
+        setSelectedFolder(null)
+      })
+      .catch((problem) => {
+        if (controller.signal.aborted) return
+        setFolderError(problem instanceof Error ? problem.message : 'Folder access could not be loaded.')
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setFolderBusy(false)
+      })
+    return () => controller.abort()
+  }, [section])
+  const loadFolderChildren = async (folderId: string) => (await listAdminSharePointFolders(folderId)).items
   const changeStatus = async (id: string, status: AdminUser['status']) => {
     setRowBusyId(id)
     try {
@@ -141,6 +186,12 @@ export function AdminCenter({
           onClick={() => setSection('users')}
           icon={<Users />}
           label={`Users (${activeUsers})`}
+        />
+        <AdminTab
+          active={section === 'folder-access'}
+          onClick={() => setSection('folder-access')}
+          icon={<FolderKey />}
+          label="Folder Access"
         />
         <AdminTab
           active={section === 'settings'}
@@ -368,6 +419,129 @@ export function AdminCenter({
             }
           }}
         />
+      )}
+      {section === 'folder-access' && (
+        <section className="panel folder-access-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="kicker">FOLDER ACCESS</p>
+              <h2>Department SharePoint folders</h2>
+            </div>
+            <span className="data-freshness">{selectedDepartmentAccess.length} assigned</span>
+          </div>
+          <div className="folder-access-controls">
+            <label className="form-field">
+              <span>Department</span>
+              <select
+                value={folderDepartment}
+                onChange={(event) => {
+                  setFolderDepartment(event.target.value)
+                  setSelectedFolder(null)
+                  setFolderError('')
+                }}
+              >
+                {departments.map((department) => (
+                  <option key={department}>{department}</option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={folderBusy || !selectedFolder || selectedFolderAlreadyAssigned}
+              onClick={async () => {
+                if (!selectedFolder) return
+                setFolderBusy(true)
+                setFolderError('')
+                try {
+                  const item = await addDepartmentSharePointFolderAccess(folderDepartment, selectedFolder)
+                  setFolderAccess((current) => [
+                    ...current.filter(
+                      (entry) =>
+                        !(entry.department === item.department && entry.sharePointFolderId === item.sharePointFolderId),
+                    ),
+                    item,
+                  ])
+                  setSelectedFolder(null)
+                } catch (problem) {
+                  setFolderError(problem instanceof Error ? problem.message : 'Folder access could not be saved.')
+                } finally {
+                  setFolderBusy(false)
+                }
+              }}
+            >
+              Assign folder
+            </button>
+          </div>
+          <SharePointFolderTree
+            library={{ id: 'sharepoint-drive', name: folderLibraryName }}
+            roots={availableFolders}
+            selectedId={selectedFolder?.id}
+            loading={folderBusy}
+            error=""
+            emptyMessage="No folders found in this SharePoint library."
+            loadingMessage="Loading SharePoint folders..."
+            errorMessage="SharePoint folders could not be loaded. Please try again."
+            selectLabel="Select folder to assign"
+            showFiles
+            onSelect={setSelectedFolder}
+            onLoadChildren={loadFolderChildren}
+          />
+          {selectedFolder && (
+            <div className="folder-selection-summary">
+              <span>Selected folder</span>
+              <strong>{selectedFolder.name}</strong>
+            </div>
+          )}
+          {folderError && (
+            <p className="form-message" role="alert">
+              {folderError}
+            </p>
+          )}
+          <div className="folder-access-list">
+            {folderBusy && !folderAccess.length ? (
+              <p className="empty-copy">Loading SharePoint folder access…</p>
+            ) : selectedDepartmentAccess.length ? (
+              selectedDepartmentAccess.map((item) => (
+                <article key={`${item.department}-${item.sharePointFolderId}`} className="folder-access-row">
+                  <FolderKey />
+                  <span>
+                    <strong>{item.name}</strong>
+                    <small>{item.path}</small>
+                  </span>
+                  <button
+                    type="button"
+                    className="danger-button"
+                    disabled={folderBusy}
+                    onClick={async () => {
+                      setFolderBusy(true)
+                      setFolderError('')
+                      try {
+                        await removeDepartmentSharePointFolderAccess(item.department, item.sharePointFolderId)
+                        setFolderAccess((current) =>
+                          current.filter(
+                            (entry) =>
+                              !(entry.department === item.department && entry.sharePointFolderId === item.sharePointFolderId),
+                          ),
+                        )
+                      } catch (problem) {
+                        setFolderError(
+                          problem instanceof Error ? problem.message : 'Folder access could not be removed.',
+                        )
+                      } finally {
+                        setFolderBusy(false)
+                      }
+                    }}
+                  >
+                    Remove
+                  </button>
+                </article>
+              ))
+            ) : (
+              <p className="empty-copy">No SharePoint folders are assigned to this department.</p>
+            )}
+          </div>
+        </section>
       )}
       {section === 'settings' && (
         <section className="admin-grid">

@@ -1,6 +1,12 @@
 import type {
   ControlledDocument,
+  DepartmentSharePointFolder,
   RegistrationInput,
+  SharePointConnectionStatus,
+  SharePointDepartmentFoldersResponse,
+  SharePointExplorerResponse,
+  SharePointFolder,
+  SharePointUploadResponse,
   UserProfile,
   WorkflowStatus,
   WorkflowTask,
@@ -274,6 +280,97 @@ export async function askAssistant(question: string) {
     method: 'POST',
     body: JSON.stringify({ question }),
   })
+}
+
+export async function getSharePointConnectionStatus(signal?: AbortSignal) {
+  return (await request<{ status: SharePointConnectionStatus }>('/sharepoint/status', {}, signal)).status
+}
+
+export async function listSharePointItems(folderId = '', signal?: AbortSignal) {
+  const suffix = folderId ? `?folder_id=${encodeURIComponent(folderId)}` : ''
+  return request<SharePointExplorerResponse>(`/sharepoint/explorer${suffix}`, {}, signal)
+}
+
+export async function getSharePointFoldersByDepartment(department: string, signal?: AbortSignal) {
+  return request<SharePointDepartmentFoldersResponse>(
+    `/sharepoint/folders?department=${encodeURIComponent(department)}`,
+    {},
+    signal,
+  )
+}
+
+export async function listAdminSharePointFolders(folderId = '', signal?: AbortSignal) {
+  const suffix = folderId ? `?folder_id=${encodeURIComponent(folderId)}` : ''
+  return request<SharePointExplorerResponse>(`/admin/sharepoint/folders${suffix}`, {}, signal)
+}
+
+export async function listDepartmentSharePointFolderAccess(signal?: AbortSignal) {
+  return (await request<{ items: DepartmentSharePointFolder[] }>('/admin/department-sharepoint-folders', {}, signal)).items
+}
+
+export async function addDepartmentSharePointFolderAccess(department: string, folder: SharePointFolder) {
+  return (
+    await request<{ item: DepartmentSharePointFolder }>(
+      `/admin/departments/${encodeURIComponent(department)}/sharepoint-folders`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          id: folder.id,
+          name: folder.name,
+          path: folder.path,
+          webUrl: folder.webUrl,
+        }),
+      },
+    )
+  ).item
+}
+
+export async function removeDepartmentSharePointFolderAccess(department: string, folderId: string) {
+  return request<{ success: boolean }>(
+    `/admin/departments/${encodeURIComponent(department)}/sharepoint-folders/${encodeURIComponent(folderId)}`,
+    { method: 'DELETE' },
+  )
+}
+
+export async function uploadSharePointFile(
+  file: File,
+  folderId = '',
+  metadata: { documentId?: string; documentTitle?: string; documentVersion?: number | string } = {},
+) {
+  const response = await fetch('/api/v1/sharepoint/upload', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': file.type || 'application/octet-stream',
+      'x-file-size': String(file.size),
+      'x-file-name': file.name,
+      ...(folderId ? { 'x-sharepoint-folder-id': folderId } : {}),
+      ...(metadata.documentId ? { 'x-docaya-document-id': metadata.documentId } : {}),
+      ...(metadata.documentTitle ? { 'x-docaya-document-title': metadata.documentTitle } : {}),
+      ...(metadata.documentVersion ? { 'x-docaya-document-version': String(metadata.documentVersion) } : {}),
+      ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
+    },
+    body: file,
+  })
+  const payload = response.status === 204 ? {} : await response.json().catch(() => ({}))
+  if (!response.ok) throw new ApiError(response.status, payload as ErrorEnvelope)
+  return payload as SharePointUploadResponse
+}
+
+export async function downloadSharePointFile(itemId: string) {
+  const response = await fetch(`/api/v1/sharepoint/download/${encodeURIComponent(itemId)}`, {
+    headers: { ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}) },
+  })
+  if (!response.ok) throw new ApiError(response.status, (await response.json().catch(() => ({}))) as ErrorEnvelope)
+  return response.blob()
+}
+
+export async function getSharePointPreview(itemId: string) {
+  return (
+    await request<{ preview: { id: string; name: string; type: string; webUrl: string | null; previewAvailable: boolean } }>(
+      `/sharepoint/preview/${encodeURIComponent(itemId)}`,
+    )
+  ).preview
 }
 
 function mapWorkflow(row: Record<string, unknown>): WorkflowTask {

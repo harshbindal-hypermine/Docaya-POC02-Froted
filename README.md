@@ -68,6 +68,27 @@ npm start -- --port 5175 --strictPort
 
 Then open **http://localhost:5175/**. Use `Ctrl+F5` if the browser shows older assets after an update. The language toggle changes English/Arabic; `Ctrl+J` on Windows or `Cmd+J` on macOS toggles the assistant when it is available in the workspace, outside an approval or registration drawer.
 
+## SharePoint Online Integration
+
+Docaya includes a backend-only Microsoft Graph integration for SharePoint Online. The browser calls Docaya API routes under `/api/v1/sharepoint/*`; it never receives Microsoft Graph tokens, client secrets or direct Graph endpoints.
+
+Configure the backend with an Entra app registration that has Microsoft Graph **Application** permissions for `Sites.Read.All` and `Files.ReadWrite.All`, then grant admin consent in Entra ID. Create a client secret for local/server use and keep it in `.env` or the deployment secret store only.
+
+Required local placeholders:
+
+```powershell
+TENANT_ID=<Entra tenant ID>
+CLIENT_ID=<Entra application client ID>
+CLIENT_SECRET=<client secret value>
+SHAREPOINT_HOSTNAME=hypermineai.sharepoint.com
+SHAREPOINT_SITE_PATH=/sites/DocayaDocLibrary-Dev
+SHAREPOINT_DRIVE_NAME=Shared Documents
+```
+
+The target SharePoint site is `https://hypermineai.sharepoint.com/sites/DocayaDocLibrary-Dev` and the document library is `Shared Documents`. Legacy `SHAREPOINT_SITE_URL` and `SHAREPOINT_DRIVE_ID` are still accepted for managed-identity deployments, but new configuration should prefer hostname, site path and drive name so the backend proves it resolved the configured site and library at startup/readiness time.
+
+Do not commit `.env`, client secrets, certificates or exported app credentials. A working connection is only established after the backend successfully authenticates with Microsoft Graph and resolves both the configured SharePoint site and the `Shared Documents` drive.
+
 ## Client demo route
 
 1. **Overview and document register:** introduce Docaya, synthetic MOI records and Arabic layout.
