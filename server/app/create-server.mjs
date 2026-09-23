@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import { createServer } from 'node:http'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { extname, resolve, sep } from 'node:path'
-import { Writable } from 'node:stream'
+import { Readable } from 'node:stream'
 import { createAuthenticator, authorize, issueDevelopmentToken } from '../middleware/auth.mjs'
 import { assert, HttpError } from '../middleware/errors.mjs'
 import { prepareRequest, readJson, sendError, sendJson } from '../middleware/http.mjs'
@@ -557,10 +557,10 @@ export function createDocayaServer({
             await audit(repository, req, actor, 'sharepoint.download', 'sharepoint', download.item.id)
             res.writeHead(200, {
               'content-type': download.contentType,
-              'content-disposition': `attachment; filename="${download.item.name.replaceAll('"', '')}"`,
               ...(download.contentLength ? { 'content-length': download.contentLength } : {}),
+              'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(download.item.name)}`,
             })
-            return download.response.body ? download.response.body.pipeTo(Writable.toWeb(res)) : res.end()
+            return download.response.body ? Readable.fromWeb(download.response.body).pipe(res) : res.end()
           } catch (error) {
             if (error instanceof HttpError) throw error
             logSharePointError(error, req.requestId, 'download')

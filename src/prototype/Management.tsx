@@ -32,6 +32,8 @@ import {
 import { Badge, DocumentTable, Empty, Field, Modal, type Translate } from './ui'
 import {
   addDepartmentSharePointFolderAccess,
+  downloadSharePointFile,
+  getSharePointPreview,
   getSharePointFoldersByDepartment,
   listSharePointItems,
   listAdminSharePointFolders,
@@ -39,6 +41,12 @@ import {
   removeDepartmentSharePointFolderAccess,
 } from '../services/api'
 import type { DepartmentSharePointFolder, SharePointFolder, SharePointItem } from '../types'
+type PreviewState = {
+  file: SharePointItem
+  url: string
+  mimeType: string
+  text: string
+}
 export type PageProps = {
   state: Workspace
   setState: Dispatch<SetStateAction<Workspace>>
@@ -56,6 +64,10 @@ export function DocumentLibraryPage({ department, lang, t }: PageProps) {
   const [drive, setDrive] = useState<{ name: string; webUrl?: string | null } | null>(null)
   const [site, setSite] = useState<{ hostname: string; path: string } | null>(null)
   const [selectedFolder, setSelectedFolder] = useState<SharePointFolder | null>(null)
+  const [selectedFile, setSelectedFile] = useState<SharePointItem | null>(null)
+  const [preview, setPreview] = useState<PreviewState | null>(null)
+  const [previewBusy, setPreviewBusy] = useState(false)
+  const [previewError, setPreviewError] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -68,6 +80,9 @@ export function DocumentLibraryPage({ department, lang, t }: PageProps) {
       setDrive(response.drive)
       setSite(response.site)
       setSelectedFolder(null)
+      setSelectedFile(null)
+      setPreview(null)
+      setPreviewError('')
     } catch (problem) {
       if (signal?.aborted) return
       setFolders([])
@@ -92,6 +107,43 @@ export function DocumentLibraryPage({ department, lang, t }: PageProps) {
   const siteRoot = site ? `${site.hostname}${site.path}` : ''
   const libraryName = drive?.name || t('Documents', 'المستندات')
   const loadChildren = async (folderId: string) => (await listSharePointItems(folderId)).items
+  const previewKind = preview?.mimeType || selectedFile?.mimeType || ''
+  const previewName = preview?.file.name || selectedFile?.name || ''
+  const canEmbedPreview =
+    previewKind.startsWith('image/') || previewKind === 'application/pdf' || previewKind.startsWith('text/')
+
+  const openFilePreview = async (file: SharePointItem) => {
+    setSelectedFile(file)
+    setSelectedFolder(null)
+    setPreview(null)
+    setPreviewError('')
+    setPreviewBusy(true)
+    try {
+      await getSharePointPreview(file.id)
+      const blob = await downloadSharePointFile(file.id)
+      const mimeType = file.mimeType || blob.type || 'application/octet-stream'
+      const url = URL.createObjectURL(blob)
+      const text = mimeType.startsWith('text/') ? await blob.text() : ''
+      setPreview((current) => {
+        if (current?.url) URL.revokeObjectURL(current.url)
+        return { file, url, mimeType, text }
+      })
+    } catch (problem) {
+      setPreviewError(
+        problem instanceof Error
+          ? problem.message
+          : t('Document preview could not be loaded.', 'تعذر تحميل معاينة الوثيقة.'),
+      )
+    } finally {
+      setPreviewBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (preview?.url) URL.revokeObjectURL(preview.url)
+    }
+  }, [preview?.url])
 
   return (
     <section className="p-card p-library-card">
@@ -138,26 +190,77 @@ export function DocumentLibraryPage({ department, lang, t }: PageProps) {
         </div>
       ) : (
         <>
-          <SharePointFolderTree
-            library={{ id: 'sharepoint-drive', name: libraryName }}
-            roots={folders}
-            selectedId={selectedFolder?.id}
-            loading={busy}
-            error={error}
-            emptyMessage={t(
-              `No SharePoint folders have been assigned to ${department} yet.`,
-              `لم يتم ربط مجلدات شيربوينت بإدارة ${local(department, lang)} بعد.`,
-            )}
-            loadingMessage={t('Loading SharePoint folders...', 'جار تحميل مجلدات شيربوينت...')}
-            errorMessage={t(
-              'Unable to load SharePoint folders. Please check the SharePoint connection or try again.',
-              'تعذر تحميل مجلدات شيربوينت. تحقق من الاتصال أو حاول مرة أخرى.',
-            )}
-            selectLabel={t('Select folder', 'اختر المجلد')}
-            showFiles
-            onSelect={setSelectedFolder}
-            onLoadChildren={loadChildren}
-          />
+          <div className="p-library-browser">
+            <SharePointFolderTree
+              library={{ id: 'sharepoint-drive', name: libraryName }}
+              roots={folders}
+              selectedId={selectedFile?.id || selectedFolder?.id}
+              loading={busy}
+              error={error}
+              emptyMessage={t(
+                `No SharePoint folders have been assigned to ${department} yet.`,
+                `لم يتم ربط مجلدات شيربوينت بإدارة ${local(department, lang)} بعد.`,
+              )}
+              loadingMessage={t('Loading SharePoint folders...', 'جار تحميل مجلدات شيربوينت...')}
+              errorMessage={t(
+                'Unable to load SharePoint folders. Please check the SharePoint connection or try again.',
+                'تعذر تحميل مجلدات شيربوينت. تحقق من الاتصال أو حاول مرة أخرى.',
+              )}
+              selectLabel={t('Open', 'فتح')}
+              showFiles
+              onSelect={(folder) => {
+                setSelectedFolder(folder)
+                setSelectedFile(null)
+                setPreviewError('')
+              }}
+              onFileSelect={(file) => void openFilePreview(file)}
+              onLoadChildren={loadChildren}
+            />
+            <aside className="p-library-preview" aria-live="polite">
+              <div className="p-library-preview-head">
+                <FileText size={18} />
+                <div>
+                  <strong>{previewName || t('Select a file', 'اختر ملفاً')}</strong>
+                  <small>
+                    {selectedFile?.path ||
+                      t(
+                        'Preview SharePoint file content inside Docaya.',
+                        'معاينة محتوى ملف شيربوينت داخل دوكايا.',
+                      )}
+                  </small>
+                </div>
+              </div>
+              {previewBusy && <div className="p-library-preview-state">{t('Loading preview...', 'جار تحميل المعاينة...')}</div>}
+              {previewError && <div className="p-error">{previewError}</div>}
+              {!previewBusy && !previewError && !selectedFile && (
+                <div className="p-library-preview-state">
+                  {t('Choose a file from the folder tree to preview it here.', 'اختر ملفاً من شجرة المجلدات لمعاينته هنا.')}
+                </div>
+              )}
+              {!previewBusy && !previewError && preview && canEmbedPreview && previewKind.startsWith('image/') && (
+                <img src={preview.url} alt={preview.file.name} />
+              )}
+              {!previewBusy && !previewError && preview && canEmbedPreview && previewKind === 'application/pdf' && (
+                <iframe title={preview.file.name} src={preview.url} />
+              )}
+              {!previewBusy && !previewError && preview && canEmbedPreview && previewKind.startsWith('text/') && (
+                <pre>{preview.text}</pre>
+              )}
+              {!previewBusy && !previewError && preview && !canEmbedPreview && (
+                <div className="p-library-preview-state">
+                  <strong>{t('Preview is not available for this file type.', 'المعاينة غير متاحة لهذا النوع من الملفات.')}</strong>
+                  {preview.file.webUrl && (
+                    <a href={preview.file.webUrl} target="_blank" rel="noreferrer">
+                      {t('Open in SharePoint', 'فتح في شيربوينت')}
+                    </a>
+                  )}
+                  <a href={preview.url} download={preview.file.name}>
+                    {t('Download file', 'تنزيل الملف')}
+                  </a>
+                </div>
+              )}
+            </aside>
+          </div>
           {selectedFolder && (
             <div className="p-folder-selection">
               <FolderOpen size={17} />
@@ -1013,7 +1116,6 @@ export function AdminPage({ state, setState, role, lang, t, notify }: PageProps)
             <SharePointFolderTree
               library={{ id: 'sharepoint-drive', name: folderLibraryName }}
               roots={folderRoots}
-              selectedId={selectedFolder?.id}
               loading={folderBusy}
               error=""
               emptyMessage={t('No folders found in this SharePoint library.', 'لا توجد مجلدات في مكتبة شيربوينت هذه.')}
@@ -1027,12 +1129,6 @@ export function AdminPage({ state, setState, role, lang, t, notify }: PageProps)
               onSelect={setSelectedFolder}
               onLoadChildren={loadAdminChildren}
             />
-            {selectedFolder && (
-              <div className="p-folder-selection">
-                <FolderOpen size={17} />
-                <span>{selectedFolder.name}</span>
-              </div>
-            )}
             <div className="p-actions end">
               <button
                 className="p-btn primary"

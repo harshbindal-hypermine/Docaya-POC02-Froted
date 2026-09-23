@@ -20,6 +20,7 @@ type Props = {
   selectLabel?: string
   showFiles?: boolean
   onSelect?: (folder: SharePointFolder) => void
+  onFileSelect?: (file: SharePointItem) => void
   onLoadChildren?: (folderId: string) => Promise<SharePointItem[]>
 }
 
@@ -43,6 +44,7 @@ export function SharePointFolderTree({
   selectLabel = 'Select folder',
   showFiles = false,
   onSelect,
+  onFileSelect,
   onLoadChildren,
 }: Props) {
   const [nodes, setNodes] = useState<Record<string, NodeState>>({})
@@ -86,12 +88,21 @@ export function SharePointFolderTree({
       if (!showFiles) return null
       return (
         <li key={item.id}>
-          <div className="sp-folder-row sp-file-row" style={{ '--sp-depth': depth } as React.CSSProperties}>
+          <div
+            className={`sp-folder-row sp-file-row ${selectedId === item.id ? 'selected' : ''}`}
+            style={{ '--sp-depth': depth } as React.CSSProperties}
+          >
             <span className="sp-folder-toggle" aria-hidden="true" />
-            <span className="sp-folder-name sp-file-name">
+            <button
+              type="button"
+              className="sp-folder-name sp-file-name"
+              aria-label={`${selectLabel}: ${item.name}`}
+              aria-current={selectedId === item.id ? 'true' : undefined}
+              onClick={() => onFileSelect?.(item)}
+            >
               <FileText size={17} />
               <span>{item.name}</span>
-            </span>
+            </button>
           </div>
         </li>
       )

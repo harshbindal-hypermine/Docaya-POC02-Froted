@@ -757,20 +757,22 @@ export default function PrototypeApp() {
                 ))}
               </select>
             </label>
-            <select
-              aria-label={t('Demo department', 'إدارة العرض')}
-              value={department}
-              onChange={(e) => {
-                setDepartment(e.target.value)
-                setSelectedId('')
-              }}
-            >
-              {departments.map((v) => (
-                <option key={v} value={v}>
-                  {local(v, lang)}
-                </option>
-              ))}
-            </select>
+            {page !== 'admin' && (
+              <select
+                aria-label={t('Demo department', 'إدارة العرض')}
+                value={department}
+                onChange={(e) => {
+                  setDepartment(e.target.value)
+                  setSelectedId('')
+                }}
+              >
+                {departments.map((v) => (
+                  <option key={v} value={v}>
+                    {local(v, lang)}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
         </div>
         <main id="prototype-main" className="p-content" tabIndex={-1}>
