@@ -145,6 +145,7 @@ export const departments = [
   'Forensic Sciences',
   'Residency & Identity',
   'Strategy & Governance',
+  'Others',
 ]
 export const documentClasses = [
   'Correspondence',
@@ -161,7 +162,7 @@ export const documentClasses = [
   'Standard',
 ]
 export const SEED_VERSION = 2
-export const sensitivities: Sensitivity[] = ['Public', 'Internal', 'Confidential', 'Secret']
+export const sensitivities: Sensitivity[] = ['Public', 'Internal', 'Confidential']
 export const flows: Flow[] = ['Single', 'Sequential', 'Parallel', 'Conditional']
 export const defaultSharePointSettings = (): Settings['sharePoint'] => ({
   enabled: true,

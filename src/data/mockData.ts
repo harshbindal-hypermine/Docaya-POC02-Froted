@@ -8,6 +8,7 @@ export const departments = [
   'Traffic & Patrols',
   'Naturalisation & Residency',
   'Human Resources',
+  'Others',
 ]
 
 export const documentTypes = ['Policy', 'Procedure', 'Standard', 'Manual', 'Work Instruction', 'Form', 'Record']

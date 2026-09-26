@@ -22,6 +22,7 @@ export const labels: Record<string, string> = {
   'Forensic Sciences': 'العلوم الجنائية',
   'Residency & Identity': 'الإقامة والهوية',
   'Strategy & Governance': 'الاستراتيجية والحوكمة',
+  Others: 'أخرى',
   Policy: 'سياسة',
   Procedure: 'إجراء',
   'Work Instruction': 'تعليمات عمل',
