@@ -13,7 +13,7 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import { SharePointFolderTree, foldersOnly } from '../../components/SharePointFolderTree'
+import { SharePointFolderTree } from '../../components/SharePointFolderTree'
 import { departments } from '../../data/mockData'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
 import {
@@ -138,6 +138,15 @@ export function AdminCenter({
   }, [section])
   const loadFolderChildren = async (folderId: string) => (await listAdminSharePointFolders(folderId)).items
   const changeStatus = async (id: string, status: AdminUser['status']) => {
+    const target = users.find((item) => item.id === id)
+    if (
+      !window.confirm(
+        `${status === 'active' ? 'Activate' : status === 'suspended' ? 'Suspend' : 'Deprovision'} ${
+          target?.name || target?.email || 'this user'
+        }? This access change will be sent to the server.`,
+      )
+    )
+      return
     setRowBusyId(id)
     try {
       await onUpdateUser(id, { status })
@@ -148,6 +157,9 @@ export function AdminCenter({
     }
   }
   const changeRole = async (id: string, role: string) => {
+    const target = users.find((item) => item.id === id)
+    if (!window.confirm(`Change ${target?.name || target?.email || 'this user'} to ${roleLabels[role] || role}?`))
+      return
     setRowBusyId(id)
     try {
       await onUpdateUser(id, { role })
@@ -451,6 +463,7 @@ export function AdminCenter({
               disabled={folderBusy || !selectedFolder || selectedFolderAlreadyAssigned}
               onClick={async () => {
                 if (!selectedFolder) return
+                if (!window.confirm(`Assign ${selectedFolder.path || selectedFolder.name} to ${folderDepartment}?`)) return
                 setFolderBusy(true)
                 setFolderError('')
                 try {
@@ -488,9 +501,15 @@ export function AdminCenter({
             onLoadChildren={loadFolderChildren}
           />
           {selectedFolder && (
-            <div className="folder-selection-summary">
+            <div className="folder-selection-summary path-summary">
               <span>Selected folder</span>
               <strong>{selectedFolder.name}</strong>
+              <small>{selectedFolder.path || 'Path unavailable from SharePoint metadata'}</small>
+              {selectedFolder.path && (
+                <button type="button" className="text-button" onClick={() => void navigator.clipboard.writeText(selectedFolder.path)}>
+                  Copy path
+                </button>
+              )}
             </div>
           )}
           {folderError && (
@@ -509,11 +528,17 @@ export function AdminCenter({
                     <strong>{item.name}</strong>
                     <small>{item.path}</small>
                   </span>
+                  {item.path && (
+                    <button type="button" className="text-button" onClick={() => void navigator.clipboard.writeText(item.path)}>
+                      Copy path
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="danger-button"
                     disabled={folderBusy}
                     onClick={async () => {
+                      if (!window.confirm(`Remove ${item.path || item.name} from ${item.department}?`)) return
                       setFolderBusy(true)
                       setFolderError('')
                       try {

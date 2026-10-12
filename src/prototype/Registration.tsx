@@ -174,6 +174,22 @@ export function Registration({
     setConfirmed(false)
     setRecord((r) => ({ ...r, [key]: value }))
   }
+  const updateScope = (scope: string) => {
+    dirty.current.add('scope')
+    setConfirmed(false)
+    setRecord((r) => ({
+      ...r,
+      scope,
+      ...(scope === 'Clearance level' && r.department !== 'Others'
+        ? {
+            department: 'Others',
+            sharePointFolderId: '',
+            sharePointFolderName: '',
+            sharePointFolderPath: '',
+          }
+        : {}),
+    }))
+  }
   const updateDepartment = (department: string) => {
     dirty.current.add('department')
     setConfirmed(false)
@@ -244,7 +260,7 @@ export function Registration({
     if (busy) return
     if (
       status === 'PendingApproval' &&
-      (!confirmed || !record.title.trim() || !record.kind || !record.summary.trim() || !record.sharePointFolderId)
+      (!confirmed || !record.title.trim() || !record.kind || !record.summary.trim())
     ) {
       setError(
         t(
@@ -281,10 +297,6 @@ export function Registration({
   const advance = (e: FormEvent) => {
     e.preventDefault()
     if (busy || !record.fileName) return
-    if (step === 1 && !record.sharePointFolderId) {
-      setError(t('Select a SharePoint folder before review.', 'اختر مجلد شيربوينت قبل المراجعة.'))
-      return
-    }
     if (step === 2) void save('PendingApproval')
     else {
       setError('')
@@ -525,10 +537,9 @@ export function Registration({
                         onChange={(e) => update('titleAr', e.target.value)}
                       />
                     </Field>
-                    <Field label={t('Document class *', 'فئة الوثيقة *')}>
-                      <select required value={record.kind} onChange={(e) => update('kind', e.target.value)}>
-                        <option value="">{t('Select a class', 'اختر الفئة')}</option>
-                        {state.settings.classes.map((v) => (
+                    <Field label={t('Access scope', 'نطاق الوصول')}>
+                      <select value={record.scope} onChange={(e) => updateScope(e.target.value)}>
+                        {['Department-only', 'Clearance level'].map((v) => (
                           <option key={v} value={v}>
                             {local(v, lang)}
                           </option>
@@ -542,42 +553,50 @@ export function Registration({
                         onChange={(e) => updateDepartment(e.target.value)}
                       >
                         {departments.map((v) => (
+                          <option key={v} value={v} disabled={record.scope === 'Clearance level' && v !== 'Others'}>
+                            {local(v, lang)}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label={t('Document class *', 'فئة الوثيقة *')}>
+                      <select required value={record.kind} onChange={(e) => update('kind', e.target.value)}>
+                        <option value="">{t('Select a class', 'اختر الفئة')}</option>
+                        {state.settings.classes.map((v) => (
                           <option key={v} value={v}>
                             {local(v, lang)}
                           </option>
                         ))}
                       </select>
                     </Field>
-                    <div className="p-span">
-                      <Field label={t('SharePoint Folder *', 'مجلد شيربوينت *')}>
-                        <SharePointFolderTree
-                          library={{ id: 'assigned-folders', name: t('Assigned folders', 'المجلدات المرتبطة') }}
-                          roots={sharePointFolders}
-                          selectedId={record.sharePointFolderId || ''}
-                          loading={sharePointLoading}
-                          error={sharePointError}
-                          emptyMessage={t(
-                            'No SharePoint folders are available for this department.',
-                            'لا توجد مجلدات شيربوينت متاحة لهذه الإدارة.',
-                          )}
-                          loadingMessage={t('Loading SharePoint folders...', 'جار تحميل مجلدات شيربوينت...')}
-                          errorMessage={t(
+                    <Field label={t('SharePoint Folder *', 'مجلد شيربوينت *')}>
+                      <SharePointFolderTree
+                        library={{ id: 'assigned-folders', name: t('Assigned folders', 'المجلدات المرتبطة') }}
+                        roots={sharePointFolders}
+                        selectedId={record.sharePointFolderId || ''}
+                        loading={sharePointLoading}
+                        error={sharePointError}
+                        emptyMessage={t(
+                          'No SharePoint folders are available for this department.',
+                          'لا توجد مجلدات شيربوينت متاحة لهذه الإدارة.',
+                        )}
+                        loadingMessage={t('Loading SharePoint folders...', 'جار تحميل مجلدات شيربوينت...')}
+                        errorMessage={t(
+                          'SharePoint folders could not be loaded. Please try again.',
+                          'تعذر تحميل مجلدات شيربوينت. حاول مرة أخرى.',
+                        )}
+                        selectLabel={t('Select SharePoint folder', 'اختر مجلد شيربوينت')}
+                        onSelect={updateSharePointFolder}
+                      />
+                      {sharePointError && (
+                        <small className="p-error-text">
+                          {t(
                             'SharePoint folders could not be loaded. Please try again.',
                             'تعذر تحميل مجلدات شيربوينت. حاول مرة أخرى.',
                           )}
-                          selectLabel={t('Select SharePoint folder', 'اختر مجلد شيربوينت')}
-                          onSelect={updateSharePointFolder}
-                        />
-                        {sharePointError && (
-                          <small className="p-error-text">
-                            {t(
-                              'SharePoint folders could not be loaded. Please try again.',
-                              'تعذر تحميل مجلدات شيربوينت. حاول مرة أخرى.',
-                            )}
-                          </small>
-                        )}
-                      </Field>
-                    </div>
+                        </small>
+                      )}
+                    </Field>
                     <Field label={t('Sensitivity *', 'درجة الحساسية *')}>
                       <select
                         value={record.sensitivity}
@@ -605,15 +624,6 @@ export function Registration({
                     <Field label={t('Priority', 'الأولوية')}>
                       <select value={record.priority} onChange={(e) => update('priority', e.target.value)}>
                         {['Routine', 'Priority', 'Urgent'].map((v) => (
-                          <option key={v} value={v}>
-                            {local(v, lang)}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                    <Field label={t('Access scope', 'نطاق الوصول')}>
-                      <select value={record.scope} onChange={(e) => update('scope', e.target.value)}>
-                        {['Department-only', 'Clearance level'].map((v) => (
                           <option key={v} value={v}>
                             {local(v, lang)}
                           </option>
@@ -672,9 +682,9 @@ export function Registration({
                       <dt>{t('Owning Department', 'الإدارة المالكة')}</dt>
                       <dd>{local(record.department, lang)}</dd>
                       <dt>{t('SharePoint Folder', 'مجلد شيربوينت')}</dt>
-                      <dd>{record.sharePointFolderName || t('Not selected', 'لم يتم الاختيار')}</dd>
+                      <dd>{record.sharePointFolderName || t('No assigned folder selected', 'لم يتم اختيار مجلد مرتبط')}</dd>
                       <dt>{t('Destination after approval', 'الوجهة بعد الاعتماد')}</dt>
-                      <dd>{record.sharePointFolderName || t('Selected folder', 'المجلد المحدد')}</dd>
+                      <dd>{record.sharePointFolderPath || record.sharePointFolderName || t('Staging until an assigned SharePoint folder is selected', 'منطقة التجهيز حتى اختيار مجلد شيربوينت مرتبط')}</dd>
                       <dt>{t('Original file', 'الملف الأصلي')}</dt>
                       <dd>
                         {record.fileName} · {(record.size / 1024).toFixed(1)} KB

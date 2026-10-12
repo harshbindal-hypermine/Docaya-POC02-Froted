@@ -1,6 +1,6 @@
-import { SharePointFolderTree, foldersOnly } from '../components/SharePointFolderTree'
+import { SharePointFolderTree } from '../components/SharePointFolderTree'
 import { local } from './translations'
-import { useEffect, useState, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 import {
   ArrowRight,
   Check,
@@ -62,7 +62,6 @@ export type PageProps = {
 export function DocumentLibraryPage({ department, lang, t }: PageProps) {
   const [folders, setFolders] = useState<DepartmentSharePointFolder[]>([])
   const [drive, setDrive] = useState<{ name: string; webUrl?: string | null } | null>(null)
-  const [site, setSite] = useState<{ hostname: string; path: string } | null>(null)
   const [selectedFolder, setSelectedFolder] = useState<SharePointFolder | null>(null)
   const [selectedFile, setSelectedFile] = useState<SharePointItem | null>(null)
   const [preview, setPreview] = useState<PreviewState | null>(null)
@@ -71,14 +70,13 @@ export function DocumentLibraryPage({ department, lang, t }: PageProps) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  const loadFolders = async (signal?: AbortSignal) => {
+  const loadFolders = useCallback(async (signal?: AbortSignal) => {
     setBusy(true)
     setError('')
     try {
       const response = await getSharePointFoldersByDepartment(department, signal)
       setFolders(response.items || response.folders || [])
       setDrive(response.drive)
-      setSite(response.site)
       setSelectedFolder(null)
       setSelectedFile(null)
       setPreview(null)
@@ -87,7 +85,6 @@ export function DocumentLibraryPage({ department, lang, t }: PageProps) {
       if (signal?.aborted) return
       setFolders([])
       setDrive(null)
-      setSite(null)
       setError(
         problem instanceof Error
           ? problem.message
@@ -96,15 +93,14 @@ export function DocumentLibraryPage({ department, lang, t }: PageProps) {
     } finally {
       if (!signal?.aborted) setBusy(false)
     }
-  }
+  }, [department, t])
 
   useEffect(() => {
     const controller = new AbortController()
     void loadFolders(controller.signal)
     return () => controller.abort()
-  }, [department])
+  }, [loadFolders])
 
-  const siteRoot = site ? `${site.hostname}${site.path}` : ''
   const libraryName = drive?.name || t('Documents', 'المستندات')
   const loadChildren = async (folderId: string) => (await listSharePointItems(folderId)).items
   const previewKind = preview?.mimeType || selectedFile?.mimeType || ''
@@ -784,7 +780,7 @@ export function AdminPage({ state, setState, role, lang, t, notify }: PageProps)
   const selectedFolderAssigned = Boolean(
     selectedFolder && mappedFolders.some((item) => item.sharePointFolderId === selectedFolder.id),
   )
-  const loadFolderAccess = async () => {
+  const loadFolderAccess = useCallback(async () => {
     setFolderBusy(true)
     setFolderError('')
     try {
@@ -805,10 +801,10 @@ export function AdminPage({ state, setState, role, lang, t, notify }: PageProps)
     } finally {
       setFolderBusy(false)
     }
-  }
+  }, [t])
   useEffect(() => {
     if (tab === 'folder-access') void loadFolderAccess()
-  }, [tab])
+  }, [loadFolderAccess, tab])
   const loadAdminChildren = async (folderId: string) => (await listAdminSharePointFolders(folderId)).items
   const assignSharePointFolder = async () => {
     if (!selectedFolder || selectedFolderAssigned) return

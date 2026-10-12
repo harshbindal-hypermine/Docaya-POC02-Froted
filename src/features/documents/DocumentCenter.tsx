@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   Archive,
@@ -27,8 +27,8 @@ type Props = {
   initialTab?: Tab
   onRegister: () => void
   onSelectDocument: (document: ControlledDocument) => void
-  onTaskAction: (task: WorkflowTask, action: WorkflowStatus) => void
-  onReviewComplete: (document: ControlledDocument) => void
+  onTaskAction: (task: WorkflowTask, action: WorkflowStatus) => Promise<void> | void
+  onReviewComplete: (document: ControlledDocument) => Promise<void> | void
 }
 
 const statuses = [
@@ -59,6 +59,10 @@ export function DocumentCenter({
   const reviews = documents.filter(
     (doc) => doc.status === 'Published' && new Date(`${doc.nextReview}T00:00:00Z`) <= reviewCutoff,
   )
+
+  useEffect(() => {
+    setTab(initialTab)
+  }, [initialTab])
 
   const filtered = useMemo(
     () =>
@@ -189,9 +193,26 @@ function Repository({
         ))}
       </div>
       <div className="table-card">
-        <div className="table-title">
-          <p className="kicker">CONTROLLED DOCUMENTS</p>
-          <h3>Document register</h3>
+        <div className="table-title repository-results">
+          <div>
+            <p className="kicker">CONTROLLED DOCUMENTS</p>
+            <h3>Document register</h3>
+          </div>
+          <div className="result-tools">
+            <span>{documents.length} of {allDocuments.length} shown</span>
+            {(query || status !== 'All') && (
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => {
+                  onQuery('')
+                  onStatus('All')
+                }}
+              >
+                Reset filters
+              </button>
+            )}
+          </div>
         </div>
         <div className="table-scroll">
           <table className="document-table">
@@ -256,7 +277,7 @@ function WorkflowInbox({
   onAction,
 }: {
   tasks: WorkflowTask[]
-  onAction: (task: WorkflowTask, action: WorkflowStatus) => void
+  onAction: (task: WorkflowTask, action: WorkflowStatus) => Promise<void> | void
 }) {
   const [filter, setFilter] = useState<'Pending' | 'Completed'>('Pending')
   const shown = tasks.filter((task) =>
@@ -280,44 +301,7 @@ function WorkflowInbox({
       </div>
       <div className="workflow-list">
         {shown.map((task) => (
-          <article className="workflow-card" key={task.id}>
-            <div className="workflow-card-main">
-              <span className={`priority-mark ${task.priority.toLowerCase()}`}>
-                <FileCheck2 size={21} />
-              </span>
-              <div>
-                <div className="workflow-meta">
-                  <span className={`priority-label ${task.priority.toLowerCase()}`}>{task.priority}</span>
-                  <span>{task.stage}</span>
-                </div>
-                <h3>{task.documentTitle}</h3>
-                <p>
-                  {task.documentNumber} · Requested by {task.requestedBy}
-                </p>
-              </div>
-            </div>
-            <div className="workflow-due">
-              <Clock3 size={15} />
-              <span>
-                Due<strong>{formatDate(task.dueDate)}</strong>
-              </span>
-            </div>
-            {task.status === 'Pending' ? (
-              <div className="workflow-actions">
-                <button className="request-button" onClick={() => onAction(task, 'Changes requested')}>
-                  <RefreshCw size={15} /> Request changes
-                </button>
-                <button className="reject-button" onClick={() => onAction(task, 'Rejected')}>
-                  <XCircle size={15} /> Reject
-                </button>
-                <button className="approve-button" onClick={() => onAction(task, 'Approved')}>
-                  <Check size={16} /> Approve
-                </button>
-              </div>
-            ) : (
-              <span className={`decision ${task.status.toLowerCase().replace(' ', '-')}`}>{task.status}</span>
-            )}
-          </article>
+          <WorkflowTaskCard task={task} onAction={onAction} key={task.id} />
         ))}
       </div>
       {shown.length === 0 && (
@@ -331,6 +315,92 @@ function WorkflowInbox({
   )
 }
 
+function WorkflowTaskCard({
+  task,
+  onAction,
+}: {
+  task: WorkflowTask
+  onAction: (task: WorkflowTask, action: WorkflowStatus) => Promise<void> | void
+}) {
+  const [busyAction, setBusyAction] = useState<WorkflowStatus | null>(null)
+  const [localError, setLocalError] = useState('')
+  const decide = async (action: WorkflowStatus) => {
+    const prompt =
+      action === 'Approved'
+        ? `Approve ${task.documentTitle}? This decision is recorded in the workflow history.`
+        : `${action} for ${task.documentTitle}? This decision is recorded in the workflow history.`
+    if (!window.confirm(prompt)) return
+    setBusyAction(action)
+    setLocalError('')
+    try {
+      await onAction(task, action)
+    } catch (problem) {
+      setLocalError(problem instanceof Error ? problem.message : 'The workflow decision could not be saved.')
+      setBusyAction(null)
+    }
+  }
+  return (
+    <article className="workflow-card" aria-busy={Boolean(busyAction)}>
+      <div className="workflow-card-main">
+        <span className={`priority-mark ${task.priority.toLowerCase()}`}>
+          <FileCheck2 size={21} />
+        </span>
+        <div>
+          <div className="workflow-meta">
+            <span className={`priority-label ${task.priority.toLowerCase()}`}>{task.priority}</span>
+            <span>{task.stage}</span>
+          </div>
+          <h3>{task.documentTitle}</h3>
+          <p>
+            {task.documentNumber} · Requested by {task.requestedBy}
+          </p>
+        </div>
+      </div>
+      <div className="workflow-due">
+        <Clock3 size={15} />
+        <span>
+          Due<strong>{formatDate(task.dueDate)}</strong>
+        </span>
+      </div>
+      {task.status === 'Pending' ? (
+        <>
+          <p className="workflow-next-step">Next action: record an approval decision after reviewing the document.</p>
+          <div className="workflow-actions">
+            <button
+              className="request-button"
+              disabled={Boolean(busyAction)}
+              onClick={() => void decide('Changes requested')}
+            >
+              <RefreshCw size={15} /> {busyAction === 'Changes requested' ? 'Saving…' : 'Request changes'}
+            </button>
+            <button
+              className="reject-button"
+              disabled={Boolean(busyAction)}
+              onClick={() => void decide('Rejected')}
+            >
+              <XCircle size={15} /> {busyAction === 'Rejected' ? 'Saving…' : 'Reject'}
+            </button>
+            <button
+              className="approve-button"
+              disabled={Boolean(busyAction)}
+              onClick={() => void decide('Approved')}
+            >
+              <Check size={16} /> {busyAction === 'Approved' ? 'Saving…' : 'Approve'}
+            </button>
+          </div>
+        </>
+      ) : (
+        <span className={`decision ${task.status.toLowerCase().replace(' ', '-')}`}>{task.status}</span>
+      )}
+      {localError && (
+        <p className="form-message" role="alert">
+          {localError}
+        </p>
+      )}
+    </article>
+  )
+}
+
 function PeriodicReviews({
   documents,
   onSelect,
@@ -338,8 +408,21 @@ function PeriodicReviews({
 }: {
   documents: ControlledDocument[]
   onSelect: (doc: ControlledDocument) => void
-  onComplete: (doc: ControlledDocument) => void
+  onComplete: (doc: ControlledDocument) => Promise<void> | void
 }) {
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [localError, setLocalError] = useState('')
+  const complete = async (doc: ControlledDocument) => {
+    if (!window.confirm(`Confirm ${doc.title} as current and schedule the next review?`)) return
+    setBusyId(doc.id)
+    setLocalError('')
+    try {
+      await onComplete(doc)
+    } catch (problem) {
+      setLocalError(problem instanceof Error ? problem.message : 'The review confirmation could not be saved.')
+      setBusyId(null)
+    }
+  }
   return (
     <section className="workflow-section">
       <div className="section-heading-row">
@@ -348,9 +431,14 @@ function PeriodicReviews({
           <p>Confirm that issued documents remain accurate, necessary and correctly classified.</p>
         </div>
       </div>
+      {localError && (
+        <p className="form-message" role="alert">
+          {localError}
+        </p>
+      )}
       <div className="review-grid">
         {documents.map((doc) => (
-          <article className="review-card" key={doc.id}>
+          <article className="review-card" key={doc.id} aria-busy={busyId === doc.id}>
             <div className="review-date">
               <CalendarCheck size={20} />
               <span>
@@ -370,13 +458,20 @@ function PeriodicReviews({
             </div>
             <footer>
               <button onClick={() => onSelect(doc)}>Open record</button>
-              <button className="approve-button" onClick={() => onComplete(doc)}>
-                <Check size={15} /> Confirm current
+              <button className="approve-button" disabled={busyId === doc.id} onClick={() => void complete(doc)}>
+                <Check size={15} /> {busyId === doc.id ? 'Saving…' : 'Confirm current'}
               </button>
             </footer>
           </article>
         ))}
       </div>
+      {!documents.length && (
+        <div className="empty-state panel">
+          <CalendarCheck size={32} />
+          <h3>No reviews due soon</h3>
+          <p>Published documents with review dates in the next 90 days will appear here.</p>
+        </div>
+      )}
     </section>
   )
 }

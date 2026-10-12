@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SignInPage } from '../../src/features/auth/SignInPage'
 import { RegisterDocumentModal } from '../../src/features/documents/RegisterDocumentModal'
 import type { UserProfile } from '../../src/types'
@@ -14,7 +14,33 @@ const user: UserProfile = {
   department: 'Records & Governance',
 }
 
-afterEach(() => cleanup())
+beforeEach(() => {
+  vi.stubGlobal('confirm', vi.fn(() => true))
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/sharepoint/folders?')) {
+        return json({
+          items: [
+            {
+              id: 'folder-policy',
+              name: 'Policy Controlled Records',
+              path: '/Corporate Governance/Policy Controlled Records',
+              type: 'folder',
+            },
+          ],
+        })
+      }
+      return json({ error: { message: `Unhandled test request: ${url}` } }, 404)
+    }),
+  )
+})
+
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 
 describe('workspace sign-in', () => {
   it('validates the email before completing sign-in', () => {
@@ -33,7 +59,7 @@ describe('workspace sign-in', () => {
 })
 
 describe('controlled document registration', () => {
-  it('validates metadata and submits the four-step workflow', () => {
+  it('validates metadata and submits the four-step workflow', async () => {
     const onSave = vi.fn()
     render(<RegisterDocumentModal user={user} onClose={vi.fn()} onSave={onSave} />)
 
@@ -57,12 +83,20 @@ describe('controlled document registration', () => {
     fireEvent.change(screen.getByLabelText(/owning department/i), { target: { value: 'Policy & Strategy' } })
 
     fireEvent.click(screen.getByRole('button', { name: /next/i }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /policy controlled records/i })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /policy controlled records/i }))
     fireEvent.click(screen.getByRole('button', { name: /next/i }))
     fireEvent.click(screen.getByRole('button', { name: /next/i }))
     fireEvent.click(screen.getByRole('button', { name: /submit for review/i }))
 
-    expect(onSave).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
     expect(onSave.mock.calls[0][0].title).toBe('Ministerial Records Procedure')
     expect(onSave.mock.calls[0][1]).toBe(true)
   })
 })
+
+function json(payload: unknown, status = 200) {
+  return Promise.resolve(
+    new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json' } }),
+  )
+}

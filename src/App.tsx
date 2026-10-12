@@ -160,6 +160,7 @@ export default function App() {
       await refreshOverview()
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : 'Document registration failed.')
+      throw problem
     }
   }
   const handleTask = async (task: WorkflowTask, action: WorkflowStatus) => {
@@ -169,6 +170,7 @@ export default function App() {
       setMessage(`${task.documentTitle}: ${action}.`)
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : 'The workflow decision failed.')
+      throw problem
     }
   }
   const handleReview = async (document: ControlledDocument) => {
@@ -181,6 +183,7 @@ export default function App() {
       setMessage(`${document.title} confirmed current.`)
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : 'The periodic review could not be saved.')
+      throw problem
     }
   }
   const handleMarkAll = async () => {
@@ -312,7 +315,6 @@ export default function App() {
       )}
       {(page === 'documents' || page === 'workflows') && (
         <DocumentCenter
-          key={page}
           documents={documents}
           tasks={tasks}
           initialTab={page === 'workflows' ? 'workflow' : 'register'}
@@ -345,9 +347,7 @@ export default function App() {
         <RegisterDocumentModal
           user={user}
           onClose={() => setRegisterOpen(false)}
-          onSave={(input, submit) => {
-            void handleRegister(input, submit)
-          }}
+          onSave={handleRegister}
         />
       )}
       {selected && <DocumentDetailModal document={selected} onClose={() => setSelected(null)} />}

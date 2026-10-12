@@ -171,7 +171,4 @@ export function SharePointFolderTree({
   )
 }
 
-export const foldersOnly = (items: SharePointItem[]) =>
-  items.filter((item): item is SharePointFolder => item.type === 'folder')
-
 const emptyNode: NodeState = { expanded: false, loading: false, error: '' }

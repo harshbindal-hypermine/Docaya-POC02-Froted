@@ -23,6 +23,7 @@ Object.defineProperty(window, 'localStorage', { value: memoryStorage(), configur
 
 beforeEach(() => {
   window.localStorage.clear()
+  vi.stubGlobal('confirm', vi.fn(() => true))
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL) => {

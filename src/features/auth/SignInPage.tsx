@@ -89,7 +89,9 @@ export function SignInPage({ onSignIn }: Props) {
           </div>
           <p className="kicker">SECURE WORKSPACE ACCESS</p>
           <h2>Sign in to continue</h2>
-          <p className="signin-subtitle">Use your organizational credentials or single sign-on.</p>
+          <p className="signin-subtitle">
+            Local development sign-in uses the configured demo API flow. Production identity must be connected by the deployment environment.
+          </p>
 
           <label className="field-label" htmlFor="email">
             Work email
@@ -169,7 +171,7 @@ export function SignInPage({ onSignIn }: Props) {
           </button>
 
           <p className="demo-notice">
-            Prototype access · Data shown is illustrative · Do not use a real password
+            Development/demo authentication · Do not use a real password · No production identity claim is made here
           </p>
         </form>
       </section>

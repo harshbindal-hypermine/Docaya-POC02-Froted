@@ -9,13 +9,13 @@ import { useDialogFocus } from '../../hooks/useDialogFocus'
 type Props = {
   user: UserProfile
   onClose: () => void
-  onSave: (input: RegistrationInput, submit: boolean) => void
+  onSave: (input: RegistrationInput, submit: boolean) => Promise<void> | void
 }
 
 const steps = ['Document metadata', 'Classification & control', 'Approval workflow', 'Review & submit']
 
 export function RegisterDocumentModal({ user, onClose, onSave }: Props) {
-  const dialogRef = useDialogFocus(onClose)
+  const dialogRef = useDialogFocus(() => requestClose())
   const [step, setStep] = useState(0)
   const [error, setError] = useState('')
   const [form, setForm] = useState<RegistrationInput>({
@@ -37,8 +37,18 @@ export function RegisterDocumentModal({ user, onClose, onSave }: Props) {
   const [sharePointFolders, setSharePointFolders] = useState<SharePointFolder[]>([])
   const [sharePointLoading, setSharePointLoading] = useState(false)
   const [sharePointError, setSharePointError] = useState('')
+  const [savingMode, setSavingMode] = useState<'draft' | 'submit' | null>(null)
 
   const numberPreview = generateNumber(form)
+  const isDirty = Boolean(
+    selectedFile ||
+      form.title.trim() ||
+      form.type ||
+      form.library ||
+      form.department ||
+      form.summary.trim() ||
+      form.sharePointFolderId,
+  )
   const set = <K extends keyof RegistrationInput>(key: K, value: RegistrationInput[K]) =>
     setForm((current) => ({ ...current, [key]: value }))
 
@@ -136,18 +146,36 @@ export function RegisterDocumentModal({ user, onClose, onSave }: Props) {
     setStep((current) => Math.min(3, current + 1))
   }
 
-  const submit = (event: FormEvent, submitForReview: boolean) => {
+  const requestClose = () => {
+    if (savingMode) return
+    if (isDirty && !window.confirm('Discard this registration? Unsaved document metadata will be lost.')) return
+    onClose()
+  }
+
+  const submit = async (event: FormEvent, submitForReview: boolean) => {
     event.preventDefault()
     const message = validateStep()
     if (message) return setError(message)
-    onSave(form, submitForReview)
+    if (
+      submitForReview &&
+      !window.confirm('Submit this document for review? The approval workflow will be created.')
+    )
+      return
+    setError('')
+    setSavingMode(submitForReview ? 'submit' : 'draft')
+    try {
+      await onSave(form, submitForReview)
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : 'Document registration failed. Your entries are still available.')
+      setSavingMode(null)
+    }
   }
 
   return (
     <div
       className="modal-backdrop"
       role="presentation"
-      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+      onMouseDown={(event) => event.target === event.currentTarget && requestClose()}
     >
       <section
         ref={dialogRef}
@@ -156,6 +184,7 @@ export function RegisterDocumentModal({ user, onClose, onSave }: Props) {
         aria-modal="true"
         aria-labelledby="register-title"
         aria-describedby="register-guidance"
+        aria-busy={Boolean(savingMode)}
       >
         <header className="modal-header">
           <div>
@@ -165,7 +194,7 @@ export function RegisterDocumentModal({ user, onClose, onSave }: Props) {
             </h2>
             <span className="number-preview">{numberPreview} · REV 0</span>
           </div>
-          <button className="close-button" onClick={onClose} aria-label="Close registration">
+          <button className="close-button" onClick={requestClose} disabled={Boolean(savingMode)} aria-label="Close registration">
             <X size={20} />
           </button>
         </header>
@@ -292,6 +321,13 @@ export function RegisterDocumentModal({ user, onClose, onSave }: Props) {
                     selectLabel="Select destination folder"
                     onSelect={setSharePointFolder}
                   />
+                  {form.sharePointFolderId && (
+                    <div className="folder-selection-summary">
+                      <span>Selected destination</span>
+                      <strong>{form.sharePointFolderName}</strong>
+                      <small>{form.sharePointFolderPath || 'Path unavailable from SharePoint metadata'}</small>
+                    </div>
+                  )}
                   {sharePointError && <small className="field-hint error">{sharePointError}</small>}
                 </Field>
                 <Field label="Retention period" required>
@@ -391,7 +427,10 @@ export function RegisterDocumentModal({ user, onClose, onSave }: Props) {
                   </div>
                   <div>
                     <dt>SharePoint folder</dt>
-                    <dd>{form.sharePointFolderName || 'Not selected'}</dd>
+                    <dd>
+                      {form.sharePointFolderName || 'Not selected'}
+                      {form.sharePointFolderPath && <small>{form.sharePointFolderPath}</small>}
+                    </dd>
                   </div>
                   <div>
                     <dt>Classification</dt>
@@ -448,12 +487,13 @@ export function RegisterDocumentModal({ user, onClose, onSave }: Props) {
           </div>
 
           <footer className="modal-footer">
-            <span>Step {step + 1} of 4</span>
+            <span>{savingMode ? (savingMode === 'draft' ? 'Saving draft…' : 'Submitting workflow…') : `Step ${step + 1} of 4`}</span>
             <div>
               {step > 0 && (
                 <button
                   type="button"
                   className="secondary-button"
+                  disabled={Boolean(savingMode)}
                   onClick={() => {
                     setError('')
                     setStep((current) => current - 1)
@@ -466,18 +506,19 @@ export function RegisterDocumentModal({ user, onClose, onSave }: Props) {
                 <button
                   type="button"
                   className="secondary-button"
+                  disabled={Boolean(savingMode)}
                   onClick={(event) => submit(event as unknown as FormEvent, false)}
                 >
-                  Save draft
+                  {savingMode === 'draft' ? 'Saving…' : 'Save draft'}
                 </button>
               )}
               {step < 3 ? (
-                <button type="button" className="gold-button" onClick={next}>
+                <button type="button" className="gold-button" disabled={Boolean(savingMode)} onClick={next}>
                   Next <ArrowRight size={16} />
                 </button>
               ) : (
-                <button className="gold-button" type="submit">
-                  Submit for review <ArrowRight size={16} />
+                <button className="gold-button" type="submit" disabled={Boolean(savingMode)}>
+                  {savingMode === 'submit' ? 'Submitting…' : 'Submit for review'} <ArrowRight size={16} />
                 </button>
               )}
             </div>

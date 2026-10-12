@@ -1,4 +1,4 @@
-import { Bot, Send, X } from 'lucide-react'
+import { Bot, RefreshCw, Send, X } from 'lucide-react'
 import { useRef, useState, type FormEvent } from 'react'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { askAssistant, ApiError, type AssistantReference } from '../../services/api'
@@ -11,6 +11,12 @@ type Exchange = {
   error?: string
 }
 
+const examplePrompts = [
+  'Which documents need review soon?',
+  'Who owns the Data Protection Policy?',
+  'Show restricted documents awaiting approval',
+]
+
 export function AskDocayaPanel({ onClose }: { onClose: () => void }) {
   const dialogRef = useDialogFocus(onClose)
   const [question, setQuestion] = useState('')
@@ -18,12 +24,15 @@ export function AskDocayaPanel({ onClose }: { onClose: () => void }) {
   const [exchanges, setExchanges] = useState<Exchange[]>([])
   const listRef = useRef<HTMLDivElement>(null)
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault()
-    const trimmed = question.trim()
+  const ask = async (prompt: string, existingId?: string) => {
+    const trimmed = prompt.trim()
     if (!trimmed || busy) return
-    const id = `exchange-${Date.now()}`
-    setExchanges((rows) => [...rows, { id, question: trimmed }])
+    const id = existingId || `exchange-${Date.now()}`
+    if (existingId) {
+      setExchanges((rows) => rows.map((row) => (row.id === id ? { id, question: trimmed } : row)))
+    } else {
+      setExchanges((rows) => [...rows, { id, question: trimmed }])
+    }
     setQuestion('')
     setBusy(true)
     try {
@@ -41,6 +50,11 @@ export function AskDocayaPanel({ onClose }: { onClose: () => void }) {
       setBusy(false)
       requestAnimationFrame(() => listRef.current?.scrollTo({ top: listRef.current.scrollHeight }))
     }
+  }
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    void ask(question)
   }
 
   return (
@@ -70,18 +84,32 @@ export function AskDocayaPanel({ onClose }: { onClose: () => void }) {
         </header>
         <div className="assistant-body" ref={listRef}>
           {!exchanges.length && (
-            <p className="empty-copy">
-              Ask about a controlled document, its status, owner, or upcoming review — for example, “what is
-              the status of the Data Protection Policy?”
-            </p>
+            <div className="assistant-empty">
+              <p className="empty-copy">
+                Ask about controlled documents, status, ownership, review dates or governance rules. Answers use
+                only records returned by the authorized API.
+              </p>
+              <div className="prompt-chips" aria-label="Example Ask Docaya prompts">
+                {examplePrompts.map((prompt) => (
+                  <button type="button" key={prompt} onClick={() => void ask(prompt)} disabled={busy}>
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
           {exchanges.map((exchange) => (
             <div className="assistant-exchange" key={exchange.id}>
               <p className="assistant-question">{exchange.question}</p>
               {exchange.error ? (
-                <p className="form-message" role="alert">
-                  {exchange.error}
-                </p>
+                <div className="assistant-error">
+                  <p className="form-message" role="alert">
+                    {exchange.error}
+                  </p>
+                  <button type="button" className="text-button" disabled={busy} onClick={() => void ask(exchange.question, exchange.id)}>
+                    <RefreshCw size={14} /> Retry
+                  </button>
+                </div>
               ) : exchange.answer ? (
                 <div className="assistant-answer">
                   <p>{exchange.answer}</p>
@@ -89,7 +117,11 @@ export function AskDocayaPanel({ onClose }: { onClose: () => void }) {
                     <ul className="assistant-references">
                       {exchange.references.map((reference) => (
                         <li key={reference.id}>
-                          <strong>{reference.number}</strong> {reference.title} · {reference.status}
+                          <strong>{reference.number}</strong>
+                          <span>{reference.title}</span>
+                          <small>
+                            {reference.status} · {reference.department} · Next review {reference.nextReview}
+                          </small>
                         </li>
                       ))}
                     </ul>
@@ -103,7 +135,7 @@ export function AskDocayaPanel({ onClose }: { onClose: () => void }) {
             </div>
           ))}
         </div>
-        <form className="assistant-composer" onSubmit={(event) => void submit(event)}>
+        <form className="assistant-composer" onSubmit={submit}>
           <input
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
